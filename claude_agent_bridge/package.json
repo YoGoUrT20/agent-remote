@@ -1,0 +1,9 @@
+{
+  "name": "agent-remote-claude-agent-bridge",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@anthropic-ai/claude-agent-sdk": "0.2.77",
+    "zod": "^4.0.0"
+  }
+}
