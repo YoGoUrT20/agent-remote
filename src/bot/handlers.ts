@@ -12,7 +12,7 @@ import {
   Events,
   Guild,
   MessageFlags,
-  PermissionFlagsBits,
+
   StringSelectMenuBuilder,
   ThreadAutoArchiveDuration,
   type ButtonInteraction,
@@ -28,7 +28,7 @@ import { buildChatAdapter } from "../adapters/factory.js";
 import {
   BOT_COMMANDS_CHANNEL,
   PROVIDERS,
-  resolvedProviderEmoji,
+  resolvedProviderEmojiURL,
   normalizeCategoryChannelName,
   type ProviderKey,
 } from "../constants.js";
@@ -227,11 +227,11 @@ async function createProjectDiscordChannelOnly(
 
     // Send welcome embed to the new project channel
     const providerName = PROVIDERS[v.pk].displayName;
-    const emoji = resolvedProviderEmoji[v.pk as ProviderKey] ?? "";
+    const emojiIconURL = resolvedProviderEmojiURL[v.pk as ProviderKey];
     const welcomeEmbed = new EmbedBuilder()
       .setColor(0x5865f2)
+      .setAuthor({ name: `Welcome to ${channelName}!`, ...(emojiIconURL ? { iconURL: emojiIconURL } : {}) })
       .setDescription(
-        `${emoji ? `${emoji} ` : ""}**Welcome to ${channelName}!**\n\n` +
         `Send a message here to start a new **${providerName}** session. ` +
         `Each message creates a thread with a live-updating response.\n\n` +
         `Reply inside a thread to continue the conversation in the same session.`,
@@ -339,7 +339,7 @@ async function streamAssistantRepliesEmbed(
 
   const provider = PROVIDERS[providerKey];
   const providerName = provider?.displayName ?? providerKey;
-  const customEmoji = resolvedProviderEmoji[providerKey] ?? "";
+
 
   const formatBody = (): string => {
     let body = "";
@@ -351,14 +351,15 @@ async function streamAssistantRepliesEmbed(
     return body.trim();
   };
 
+  const emojiURL = resolvedProviderEmojiURL[providerKey];
   const buildEmbed = (description: string, color: number) => {
-    const prefix = customEmoji ? `${customEmoji} ` : "";
-    const desc = `${prefix}**${providerName}**\n\n${description}`;
-    return new EmbedBuilder()
+    const embed = new EmbedBuilder()
       .setColor(color)
+      .setAuthor({ name: providerName, ...(emojiURL ? { iconURL: emojiURL } : {}) })
       .setDescription(
-        desc.length > MAX_EMBED_DESC ? `${desc.slice(0, MAX_EMBED_DESC)}…` : desc,
+        description.length > MAX_EMBED_DESC ? `${description.slice(0, MAX_EMBED_DESC)}…` : description,
       );
+    return embed;
   };
 
   const statusMsg = await thread.send({
@@ -633,36 +634,32 @@ export function registerHandlers(client: Client): void {
           let enabled = settings.enabledProviderKeys();
           if (!enabled.length) enabled = ["claude"];
           const result = await provisionGuild(guild, enabled);
-          const reportEmbed = new EmbedBuilder()
-            .setTitle("✅ Server provisioned successfully")
-            .setColor(0x00ff00);
-          if (result.categoriesCreated.length) {
-            reportEmbed.addFields({
-              name: "Categories created",
-              value: result.categoriesCreated.join(", "),
+          if (result.skipped.length) {
+            await interaction.followUp({
+              content: `**Skipped:** ${result.skipped.join(", ")}`,
+              flags: MessageFlags.Ephemeral,
             });
           }
-          if (result.skipped.length) {
-            reportEmbed.addFields({ name: "Skipped", value: result.skipped.join(", ") });
-          }
-          reportEmbed.addFields({
-            name: "Next step",
-            value:
-              "Start the bot with ```bun run bot``` \nThen open a project using `/project open <project name>`.",
-          });
-          const botMember = guild.members.me;
+          // Send a per-provider welcome embed to each bot-commands channel
+          await guild.channels.fetch();
           for (const ch of guild.channels.cache.values()) {
-            if (
-              ch.type === ChannelType.GuildText &&
-              botMember &&
-              ch.permissionsFor(botMember).has(PermissionFlagsBits.SendMessages)
-            ) {
-              try {
-                await ch.send({ embeds: [reportEmbed] });
-                break;
-              } catch {
-              }
-            }
+            if (ch.type !== ChannelType.GuildText || ch.name !== BOT_COMMANDS_CHANNEL) continue;
+            const cat = ch.parent;
+            if (!cat || cat.type !== ChannelType.GuildCategory) continue;
+            const pk = providerKeyFromCategory(cat);
+            if (!pk) continue;
+            const provider = PROVIDERS[pk];
+            const iconURL = resolvedProviderEmojiURL[pk];
+            const embed = new EmbedBuilder()
+              .setColor(0x5865f2)
+              .setAuthor({ name: provider.displayName, ...(iconURL ? { iconURL } : {}) })
+              .setDescription(
+                `This is the **${provider.displayName}** command channel.\n\n` +
+                `Start the bot with \`\`\`bun run bot\`\`\`\nThen open a project using \`/project open <project name>\`.`,
+              );
+            try {
+              await ch.send({ embeds: [embed] });
+            } catch {}
           }
           const cb = client.onInstallComplete;
           if (typeof cb === "function") await Promise.resolve(cb());
@@ -896,7 +893,19 @@ export function registerHandlers(client: Client): void {
     }
 
     if (message.channel.type !== ChannelType.GuildText) return;
-    if (message.channel.name === BOT_COMMANDS_CHANNEL) return;
+    if (message.channel.name === BOT_COMMANDS_CHANNEL) {
+      try {
+        const reply = await message.reply({
+          embeds: [
+            new EmbedBuilder()
+              .setDescription("Messages here don't do anything. Use `/project open` to add a project channel.")
+              .setColor(0x5865f2),
+          ],
+        });
+        setTimeout(() => { reply.delete().catch(() => {}); }, 8000);
+      } catch {}
+      return;
+    }
     const cat = message.channel.parent;
     if (!cat || cat.type !== ChannelType.GuildCategory) return;
     const pk = providerKeyFromCategory(cat);

@@ -60,6 +60,11 @@ export const PROVIDER_EMOJI_FILES: Partial<Record<ProviderKey, string>> = {
  */
 export const resolvedProviderEmoji: Partial<Record<ProviderKey, string>> = {};
 
+/**
+ * Runtime cache of guild emoji image URLs for use in embed author icons.
+ */
+export const resolvedProviderEmojiURL: Partial<Record<ProviderKey, string>> = {};
+
 export const PROVIDER_CATEGORY_NAME_UNICODE_PREFIX: Partial<Record<ProviderKey, string>> = {
   claude: "🟠",
   codex: "🧩",

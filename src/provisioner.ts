@@ -8,6 +8,7 @@ import {
   PROVIDER_EMOJI_NAMES,
   PROVIDER_EMOJI_FILES,
   resolvedProviderEmoji,
+  resolvedProviderEmojiURL,
   normalizeCategoryChannelName,
   providerCategoryChannelName,
   type ProviderKey,
@@ -52,6 +53,7 @@ export async function uploadProviderEmoji(guild: Guild, keys: string[]): Promise
     const found = existing.find((e) => e.name === emojiName);
     if (found) {
       resolvedProviderEmoji[key as ProviderKey] = `<:${found.name}:${found.id}>`;
+      resolvedProviderEmojiURL[key as ProviderKey] = `https://cdn.discordapp.com/emojis/${found.id}.png`;
       console.error(`[provisioner] emoji ${emojiName} already exists: ${found.id}`);
       continue;
     }
@@ -67,6 +69,7 @@ export async function uploadProviderEmoji(guild: Guild, keys: string[]): Promise
         reason: "agent-remote provider emoji",
       });
       resolvedProviderEmoji[key as ProviderKey] = `<:${created.name}:${created.id}>`;
+      resolvedProviderEmojiURL[key as ProviderKey] = `https://cdn.discordapp.com/emojis/${created.id}.png`;
       console.error(`[provisioner] uploaded emoji ${emojiName}: ${created.id}`);
     } catch (e) {
       console.error(`[provisioner] failed to upload emoji ${emojiName}:`, e instanceof Error ? e.message : e);
@@ -84,6 +87,7 @@ export async function syncProviderEmoji(guild: Guild): Promise<void> {
       const found = existing.find((e) => e.name === emojiName);
       if (found) {
         resolvedProviderEmoji[key as ProviderKey] = `<:${found.name}:${found.id}>`;
+        resolvedProviderEmojiURL[key as ProviderKey] = `https://cdn.discordapp.com/emojis/${found.id}.png`;
       }
     }
   } catch {}
