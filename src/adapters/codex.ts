@@ -189,13 +189,17 @@ export class CodexCliAdapter extends BaseAdapter {
       this._writeMessage(ctx, { method: "initialized" });
 
       /* Start a thread (matches t3code's threadStartParams shape) */
-      const threadResponse = await this._sendRequest<Record<string, unknown>>(ctx, "thread/start", {
+      const threadStartParams: Record<string, unknown> = {
         model,
         cwd,
         approvalPolicy: "never",
         sandbox: "danger-full-access",
         experimentalRawEvents: false,
-      });
+      };
+      if (input.resumeCursor && typeof input.resumeCursor === "string") {
+        threadStartParams.threadId = input.resumeCursor;
+      }
+      const threadResponse = await this._sendRequest<Record<string, unknown>>(ctx, "thread/start", threadStartParams);
 
       /* Extract provider-assigned thread ID from response */
       const threadObj = threadResponse?.thread as Record<string, unknown> | undefined;
@@ -329,6 +333,11 @@ export class CodexCliAdapter extends BaseAdapter {
   getThreadTitle(threadId: string): string | null {
     const ctx = this._sessions.get(threadId);
     return ctx?.threadTitle ?? null;
+  }
+
+  getSessionId(threadId: string): string | null {
+    const ctx = this._sessions.get(threadId);
+    return ctx?.providerThreadId ?? null;
   }
 
   override async cancel(): Promise<void> {

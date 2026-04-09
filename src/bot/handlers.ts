@@ -41,6 +41,15 @@ import {
   WORKSPACE_SELECT_MAX_OPTIONS,
 } from "../workspace-dirs.js";
 
+function persistSessionId(client: Client, threadId: string, adapter: BaseAdapter, providerKey: string, cwd?: string): void {
+  if ("getSessionId" in adapter && typeof adapter.getSessionId === "function") {
+    const sid = adapter.getSessionId(threadId);
+    if (sid) {
+      client.sessionStore.set(threadId, { sessionId: sid, cwd: cwd ?? "", providerKey });
+    }
+  }
+}
+
 const MAX_EMBED_DESC = 4080;
 const PROJECT_OPEN_SELECT_ID = "ar_project_open_pick";
 const PROJECT_CREATE_YES = "ar_pc_yes:";
@@ -240,11 +249,15 @@ async function createProjectDiscordChannelOnly(
       await created.send({ embeds: [welcomeEmbed] });
     } catch { }
 
-    await replyEphemeralEmbed(interaction, {
-      title: "Project opened",
-      description: `Created ${created.toString()}. Send a message there to start a CLI turn (thread + live embed).`,
-      ok: true,
-    }, editExtras);
+    const openedEmbed = new EmbedBuilder()
+      .setTitle("Project opened")
+      .setDescription(`Created ${created.toString()}. Send a message there to start a **${providerName}** session.`)
+      .setColor(0x57f287)
+      .setAuthor({ name: providerName, ...(emojiIconURL ? { iconURL: emojiIconURL } : {}) });
+    await interaction.editReply({
+      embeds: [openedEmbed],
+      ...(editExtras ?? {}),
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await replyEphemeralEmbed(
@@ -838,7 +851,7 @@ export function registerHandlers(client: Client): void {
       if (!text) return;
       let sess = client.chatRegistry.get(threadCh.id);
 
-      /* Session missing (e.g. bot restarted) — create a fresh one */
+      /* Session missing (e.g. bot restarted) — resume from persisted session */
       if (!sess) {
         const settings = loadSettings();
         let enabledList = settings.enabledProviderKeys();
@@ -846,8 +859,13 @@ export function registerHandlers(client: Client): void {
         if (!enabledList.includes(pk)) return;
         try {
           const adapter = buildChatAdapter(pk, settings);
-          const cwdOpt = pk === "claude" ? projectWorkspaceCwd(settings, parent.name) : undefined;
-          await adapter.startSession({ threadId: threadCh.id, cwd: cwdOpt });
+          const cwdOpt = projectWorkspaceCwd(settings, parent.name);
+          const persisted = client.sessionStore.get(threadCh.id);
+          await adapter.startSession({
+            threadId: threadCh.id,
+            cwd: cwdOpt,
+            resumeCursor: persisted?.sessionId,
+          });
           sess = { providerKey: pk, adapter };
           client.chatRegistry.add(threadCh.id, sess);
         } catch (e) {
@@ -875,6 +893,7 @@ export function registerHandlers(client: Client): void {
             providerKey: pk,
             skipRename: true,
           });
+          persistSessionId(client, threadCh.id, session.adapter, pk);
         } catch (e) {
           console.error(e);
           try {
@@ -935,7 +954,7 @@ export function registerHandlers(client: Client): void {
     let adapter: BaseAdapter | null = null;
     try {
       adapter = buildChatAdapter(pk, settings);
-      const cwdOpt = pk === "claude" ? projectWorkspaceCwd(settings, message.channel.name) : undefined;
+      const cwdOpt = projectWorkspaceCwd(settings, message.channel.name);
       await adapter.startSession({ threadId: thread.id, cwd: cwdOpt });
       await adapter.sendTurn({ threadId: thread.id, input: text });
       const session = { providerKey: pk, adapter };
@@ -946,6 +965,7 @@ export function registerHandlers(client: Client): void {
           fallbackThreadTitle: text,
           providerKey: pk,
         });
+        persistSessionId(client, thread.id, session.adapter, pk);
       });
     } catch (e) {
       if (adapter) {

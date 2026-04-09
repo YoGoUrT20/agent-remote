@@ -212,6 +212,9 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
     if (model) queryOptions.model = model;
     if (this._effort) (queryOptions as Record<string, unknown>).effort = this._effort;
     if (Object.keys(settings).length > 0) queryOptions.settings = settings;
+    if (input.resumeCursor && typeof input.resumeCursor === "string") {
+      queryOptions.resume = input.resumeCursor;
+    }
 
     let queryRuntime: ClaudeQueryRuntime;
     try {
@@ -428,6 +431,12 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
   getThreadTitle(threadId: string): string | null {
     const ctx = this._sessions.get(threadId);
     return ctx?.threadTitle ?? null;
+  }
+
+  getSessionId(threadId: string): string | null {
+    const ctx = this._sessions.get(threadId);
+    const cursor = ctx?.session.resumeCursor;
+    return typeof cursor === "string" ? cursor : null;
   }
 
   override async cancel(): Promise<void> {

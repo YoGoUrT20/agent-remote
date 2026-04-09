@@ -1,3 +1,4 @@
+import { join } from "node:path";
 import { Client, Events, GatewayIntentBits, Partials } from "discord.js";
 import { bunRestOptions } from "./bun-rest.js";
 import { registerHandlers } from "./handlers.js";
@@ -6,6 +7,7 @@ import type { PendingProjectCreate } from "./pending-project.js";
 import { logErr, logOut } from "../stdio-log.js";
 import { syncProviderEmoji } from "../provisioner.js";
 import { loadSettings } from "../config.js";
+import { SessionStore } from "../session-store.js";
 
 export interface CreateClientOptions {
   onInstallComplete?: (() => void | Promise<void>) | null;
@@ -23,6 +25,9 @@ export function createClient(options: CreateClientOptions = {}): Client {
     rest: bunRestOptions(),
   });
   client.chatRegistry = new ChatRegistry();
+  client.sessionStore = new SessionStore(
+    join(process.env.HOME ?? process.env.USERPROFILE ?? ".", ".agent-remote", "sessions.json"),
+  );
   client.pendingProjectCreates = new Map<string, PendingProjectCreate>();
   client.onInstallComplete = options.onInstallComplete ?? null;
   registerHandlers(client);
