@@ -331,9 +331,6 @@ async function stepWaitForInstall(installPromise: Promise<void>): Promise<void> 
   console.log("");
   console.log("The setup bot has disconnected from Discord.");
   console.log("");
-  console.log("Start the bot:");
-  console.log("  bun run bot");
-  console.log("");
   console.log("To re-run setup:  bun run setup");
   console.log("");
 }

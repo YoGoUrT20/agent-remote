@@ -19,52 +19,58 @@ program.hook("preAction", (thisCommand) => {
   }
 });
 
+async function startBot(): Promise<void> {
+  const settings = loadSettings();
+  if (!settings.discordBotToken) {
+    logErr("Error: DISCORD_BOT_TOKEN is not set. Run `agent-remote setup` first.");
+    process.exit(1);
+  }
+  process.on("unhandledRejection", (reason) => {
+    logErr(`Unhandled rejection: ${String(reason)}`);
+  });
+  /* Sync slash commands on every boot so new/updated commands show up
+     without re-running `setup`. Cheap, idempotent PUT to the guild. */
+  if (settings.discordApplicationId && settings.discordGuildId) {
+    try {
+      await deployGuildCommands(
+        settings.discordBotToken,
+        settings.discordApplicationId,
+        settings.discordGuildId,
+      );
+      logOut("Slash commands synced to guild.");
+    } catch (e) {
+      logErr(`Could not sync slash commands: ${String(e)}`);
+    }
+  } else {
+    logErr(
+      "Skipping slash-command sync: DISCORD_APPLICATION_ID or DISCORD_GUILD_ID missing from .env.",
+    );
+  }
+
+  const client = createClient();
+  logOut("Connecting to Discord…");
+  try {
+    await client.login(settings.discordBotToken);
+  } catch (e) {
+    logErr(`Discord login failed: ${String(e)}`);
+    process.exit(1);
+  }
+}
+
 program
   .command("setup")
   .description("Run the interactive first-time setup wizard")
   .action(async () => {
     await runWizard();
+    logOut("Starting the bot...");
+    await startBot();
   });
 
 program
   .command("bot")
   .description("Start the Discord bot process")
   .action(async () => {
-    const settings = loadSettings();
-    if (!settings.discordBotToken) {
-      logErr("Error: DISCORD_BOT_TOKEN is not set. Run `agent-remote setup` first.");
-      process.exit(1);
-    }
-    process.on("unhandledRejection", (reason) => {
-      logErr(`Unhandled rejection: ${String(reason)}`);
-    });
-    /* Sync slash commands on every boot so new/updated commands show up
-       without re-running `setup`. Cheap, idempotent PUT to the guild. */
-    if (settings.discordApplicationId && settings.discordGuildId) {
-      try {
-        await deployGuildCommands(
-          settings.discordBotToken,
-          settings.discordApplicationId,
-          settings.discordGuildId,
-        );
-        logOut("Slash commands synced to guild.");
-      } catch (e) {
-        logErr(`Could not sync slash commands: ${String(e)}`);
-      }
-    } else {
-      logErr(
-        "Skipping slash-command sync: DISCORD_APPLICATION_ID or DISCORD_GUILD_ID missing from .env.",
-      );
-    }
-
-    const client = createClient();
-    logOut("Connecting to Discord…");
-    try {
-      await client.login(settings.discordBotToken);
-    } catch (e) {
-      logErr(`Discord login failed: ${String(e)}`);
-      process.exit(1);
-    }
+    await startBot();
   });
 
 program
