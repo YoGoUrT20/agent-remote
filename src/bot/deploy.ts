@@ -2,7 +2,7 @@ import { REST, Routes, SlashCommandBuilder, PermissionFlagsBits } from "discord.
 import { sanitizeDiscordCredential } from "../discord-input.js";
 import { bunRestOptions } from "./bun-rest.js";
 
-export function buildSlashCommandBodies(): [ReturnType<SlashCommandBuilder["toJSON"]>, ReturnType<SlashCommandBuilder["toJSON"]>] {
+export function buildSlashCommandBodies(): ReturnType<SlashCommandBuilder["toJSON"]>[] {
   const install = new SlashCommandBuilder()
     .setName("install")
     .setDescription("Provision this server for agent-remote")
@@ -24,7 +24,12 @@ export function buildSlashCommandBodies(): [ReturnType<SlashCommandBuilder["toJS
         ),
     );
 
-  return [install.toJSON(), project.toJSON()];
+  const settings = new SlashCommandBuilder()
+    .setName("settings")
+    .setDescription("Open the agent-remote access-control panel (owner only)")
+    .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
+
+  return [install.toJSON(), project.toJSON(), settings.toJSON()];
 }
 
 export async function deployGuildCommands(

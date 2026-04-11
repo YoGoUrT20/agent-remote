@@ -113,6 +113,41 @@ async function stepSelectProviders(): Promise<ProviderKey[]> {
   return selected;
 }
 
+async function stepAccessControl(): Promise<{
+  ownerUserId: string;
+  restrictToWhitelist: boolean;
+}> {
+  stepTitle(3, "Access control");
+  console.log("Restrict the bot to only you (and users you whitelist) if desired.");
+  console.log("You can change these later at any time with the /settings command.");
+  console.log("");
+  const { ownerUserId } = await prompts<"ownerUserId">(
+    {
+      type: "text",
+      name: "ownerUserId",
+      message: "Your Discord user ID (numbers only, blank to skip):",
+      validate: (v: string) =>
+        !v || /^\d{10,25}$/.test(v.trim())
+          ? true
+          : "Must be a numeric Discord user ID (or blank).",
+    },
+    cancelOpts,
+  );
+  const cleanOwner = (ownerUserId ?? "").trim();
+  const { restrict } = await prompts<"restrict">(
+    {
+      type: "confirm",
+      name: "restrict",
+      message: "Restrict the bot so only whitelisted users can use it?",
+      initial: true,
+    },
+    cancelOpts,
+  );
+  const restrictToWhitelist = restrict !== false;
+  console.log("\nAccess control configured.");
+  return { ownerUserId: cleanOwner, restrictToWhitelist };
+}
+
 async function stepDiscord(): Promise<{ botToken: string; appId: string; guildId: string }> {
   stepTitle(2, "Discord configuration");
   console.log("Create a Discord application");
@@ -149,7 +184,7 @@ async function stepInfrastructure(): Promise<{
   redisUrl: string;
   workspaceCwd: string;
 }> {
-  stepTitle(3, "Infrastructure");
+  stepTitle(4, "Infrastructure");
   const defaultWorkspace = normalize(resolve(process.cwd(), ".."));
   const infra = await prompts<"dbUrl" | "redisUrl" | "workspaceDir">(
     [
@@ -192,9 +227,21 @@ async function stepWriteEnv(args: {
   redisUrl: string;
   workspaceCwd: string;
   enabled: ProviderKey[];
+  ownerUserId: string;
+  restrictToWhitelist: boolean;
 }): Promise<void> {
-  const { botToken, appId, guildId, dbUrl, redisUrl, workspaceCwd, enabled } = args;
-  stepTitle(4, "Write configuration");
+  const {
+    botToken,
+    appId,
+    guildId,
+    dbUrl,
+    redisUrl,
+    workspaceCwd,
+    enabled,
+    ownerUserId,
+    restrictToWhitelist,
+  } = args;
+  stepTitle(5, "Write configuration");
   const encryptionKey = randomBytes(32).toString("base64url");
   const providerEnvKeys: string[] = [];
   for (const key of enabled) {
@@ -218,6 +265,11 @@ async function stepWriteEnv(args: {
     "",
     "# Enabled providers (comma-separated)",
     `ENABLED_PROVIDERS=${enabled.join(",")}`,
+    "",
+    "# Access control — can also be changed at runtime via /settings",
+    `BOT_OWNER_ID=${ownerUserId}`,
+    "BOT_ALLOWED_USER_IDS=",
+    `BOT_RESTRICT_TO_WHITELIST=${restrictToWhitelist ? "true" : "false"}`,
     "",
     "# Encryption",
     `ENCRYPTION_KEY=${encryptionKey}`,
@@ -256,7 +308,7 @@ async function stepWriteEnv(args: {
 }
 
 async function stepWaitForInstall(installPromise: Promise<void>): Promise<void> {
-  stepTitle(5, "Server provisioning");
+  stepTitle(6, "Server provisioning");
   console.log("The bot is online.");
   console.log("");
   console.log("  1. Go to your Discord server");
@@ -331,6 +383,7 @@ export async function runWizard(): Promise<void> {
       process.exit(1);
     }
     console.log("\nBot starting in background...");
+    const { ownerUserId, restrictToWhitelist } = await stepAccessControl();
     const { dbUrl, redisUrl, workspaceCwd } = await stepInfrastructure();
     await stepWriteEnv({
       botToken,
@@ -340,6 +393,8 @@ export async function runWizard(): Promise<void> {
       redisUrl,
       workspaceCwd,
       enabled,
+      ownerUserId,
+      restrictToWhitelist,
     });
     loadSettings();
     try {

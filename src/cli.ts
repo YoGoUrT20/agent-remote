@@ -3,6 +3,7 @@ import { Command } from "commander";
 import Fastify from "fastify";
 import { loadSettings } from "./config.js";
 import { createClient } from "./bot/client.js";
+import { deployGuildCommands } from "./bot/deploy.js";
 import { runWizard } from "./setup-wizard.js";
 import { logErr, logOut } from "./stdio-log.js";
 
@@ -37,6 +38,25 @@ program
     process.on("unhandledRejection", (reason) => {
       logErr(`Unhandled rejection: ${String(reason)}`);
     });
+    /* Sync slash commands on every boot so new/updated commands show up
+       without re-running `setup`. Cheap, idempotent PUT to the guild. */
+    if (settings.discordApplicationId && settings.discordGuildId) {
+      try {
+        await deployGuildCommands(
+          settings.discordBotToken,
+          settings.discordApplicationId,
+          settings.discordGuildId,
+        );
+        logOut("Slash commands synced to guild.");
+      } catch (e) {
+        logErr(`Could not sync slash commands: ${String(e)}`);
+      }
+    } else {
+      logErr(
+        "Skipping slash-command sync: DISCORD_APPLICATION_ID or DISCORD_GUILD_ID missing from .env.",
+      );
+    }
+
     const client = createClient();
     logOut("Connecting to Discord…");
     try {

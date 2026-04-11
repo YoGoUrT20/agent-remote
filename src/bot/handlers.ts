@@ -12,17 +12,29 @@ import {
   Events,
   Guild,
   MessageFlags,
-
+  PermissionFlagsBits,
   StringSelectMenuBuilder,
+  Team,
   ThreadAutoArchiveDuration,
+  UserSelectMenuBuilder,
+  type APIEmbedField,
+  type BaseMessageOptions,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
+  type Interaction,
+  type MessageActionRowComponentBuilder,
+  type RepliableInteraction,
   type StringSelectMenuInteraction,
   type ThreadChannel,
 } from "discord.js";
 import type { BaseAdapter } from "../adapters/base.js";
 import type { Settings } from "../config.js";
 import { loadSettings } from "../config.js";
+import {
+  effectiveAccess,
+  isUserAllowed,
+  type EffectiveAccess,
+} from "../access-store.js";
 import { runSerial } from "./serial-queue.js";
 import { buildChatAdapter } from "../adapters/factory.js";
 import {
@@ -55,6 +67,274 @@ const PROJECT_OPEN_SELECT_ID = "ar_project_open_pick";
 const PROJECT_CREATE_YES = "ar_pc_yes:";
 const PROJECT_CREATE_NO = "ar_pc_no:";
 const PENDING_PROJECT_TTL_MS = 15 * 60 * 1000;
+
+const SETTINGS_SET_OWNER = "ar_settings_set_owner";
+const SETTINGS_ADD_ALLOWED = "ar_settings_add_allowed";
+const SETTINGS_REMOVE_ALLOWED = "ar_settings_remove_allowed";
+const SETTINGS_TOGGLE_RESTRICT = "ar_settings_toggle_restrict";
+const SETTINGS_CLEAR_ALLOWED = "ar_settings_clear_allowed";
+const SETTINGS_CLAIM_OWNER = "ar_settings_claim_owner";
+const SETTINGS_REFRESH = "ar_settings_refresh";
+const SETTINGS_REMOVE_OWNER = "ar_settings_remove_owner";
+const SETTINGS_DETECT_OWNER = "ar_settings_detect_owner";
+
+const MAX_WHITELIST_REMOVE_OPTIONS = 25;
+
+function currentAccess(client: Client): EffectiveAccess {
+  const settings = loadSettings();
+  return effectiveAccess(settings.accessEnvDefaults, client.accessStore.all());
+}
+
+function interactionMemberHasAdmin(interaction: Interaction): boolean {
+  const member = interaction.member;
+  if (!member) return false;
+  const perms = (member as { permissions?: unknown }).permissions;
+  if (perms && typeof (perms as { has?: unknown }).has === "function") {
+    try {
+      return (perms as { has: (flag: bigint) => boolean }).has(
+        PermissionFlagsBits.Administrator,
+      );
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
+function isSettingsAuthorized(
+  interaction: Interaction,
+  access: EffectiveAccess,
+): boolean {
+  const userId = interaction.user.id;
+  if (access.ownerUserId) return userId === access.ownerUserId;
+  return interactionMemberHasAdmin(interaction);
+}
+
+async function resolveUserLabel(client: Client, userId: string): Promise<string> {
+  try {
+    const u = await client.users.fetch(userId);
+    return u.tag ?? u.username ?? userId;
+  } catch {
+    return userId;
+  }
+}
+
+function bulletedMentionList(userIds: string[]): string {
+  if (userIds.length === 0) return "_(empty)_";
+  return userIds.map((id) => `• <@${id}>  \`${id}\``).join("\n");
+}
+
+async function buildSettingsPanel(
+  client: Client,
+  access: EffectiveAccess,
+): Promise<BaseMessageOptions> {
+  const settings = loadSettings();
+  const envDefaults = settings.accessEnvDefaults;
+  const overrides = client.accessStore.all();
+
+  const ownerLine = access.ownerUserId
+    ? `<@${access.ownerUserId}>  \`${access.ownerUserId}\``
+    : "_(not set)_";
+  const restrictLine = access.restrictToWhitelist
+    ? ":lock: **On** — only the owner and whitelisted users may use the bot"
+    : ":unlock: **Off** — anyone in the server may use the bot";
+  const whitelistLine = bulletedMentionList(access.allowedUserIds);
+
+  const sources: string[] = [];
+  sources.push(
+    `Owner: ${
+      overrides.ownerUserId
+        ? "`/settings` override"
+        : envDefaults.ownerUserId
+          ? "`BOT_OWNER_ID` env"
+          : "unset"
+    }`,
+  );
+  sources.push(
+    `Whitelist: ${
+      overrides.allowedUserIds !== undefined
+        ? "`/settings` override"
+        : envDefaults.allowedUserIds.length > 0
+          ? "`BOT_ALLOWED_USER_IDS` env"
+          : "unset"
+    }`,
+  );
+  sources.push(
+    `Restrict mode: ${
+      overrides.restrictToWhitelist !== undefined
+        ? "`/settings` override"
+        : process.env.BOT_RESTRICT_TO_WHITELIST
+          ? "`BOT_RESTRICT_TO_WHITELIST` env"
+          : "default (on)"
+    }`,
+  );
+
+  const fields: APIEmbedField[] = [
+    { name: "Owner", value: ownerLine, inline: false },
+    { name: "Restrict to whitelist", value: restrictLine, inline: false },
+    { name: `Whitelist (${access.allowedUserIds.length})`, value: whitelistLine, inline: false },
+    { name: "Value sources", value: sources.map((s) => `• ${s}`).join("\n"), inline: false },
+  ];
+
+  const embed = new EmbedBuilder()
+    .setTitle("Access control — /settings")
+    .setColor(access.restrictToWhitelist ? 0xfee75c : 0x5865f2)
+    .setDescription(
+      "Configure who is allowed to use this bot.\n" +
+        "Runtime overrides set here win over the values in `.env`. " +
+        "The owner is always implicitly allowed.",
+    )
+    .addFields(fields);
+
+  const setOwnerRow = new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(
+    new UserSelectMenuBuilder()
+      .setCustomId(SETTINGS_SET_OWNER)
+      .setPlaceholder("Set bot owner (replaces current owner)")
+      .setMinValues(1)
+      .setMaxValues(1),
+  );
+
+  const addAllowedRow = new ActionRowBuilder<UserSelectMenuBuilder>().addComponents(
+    new UserSelectMenuBuilder()
+      .setCustomId(SETTINGS_ADD_ALLOWED)
+      .setPlaceholder("Add users to the whitelist")
+      .setMinValues(1)
+      .setMaxValues(10),
+  );
+
+  const rows: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [
+    setOwnerRow as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>,
+    addAllowedRow as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>,
+  ];
+
+  if (access.allowedUserIds.length > 0) {
+    const slice = access.allowedUserIds.slice(0, MAX_WHITELIST_REMOVE_OPTIONS);
+    const labels = await Promise.all(slice.map((id) => resolveUserLabel(client, id)));
+    const removeMenu = new StringSelectMenuBuilder()
+      .setCustomId(SETTINGS_REMOVE_ALLOWED)
+      .setPlaceholder("Remove users from the whitelist")
+      .setMinValues(1)
+      .setMaxValues(slice.length)
+      .addOptions(
+        slice.map((id, i) => ({
+          label: labels[i]!.slice(0, 100),
+          description: id.slice(0, 100),
+          value: id,
+        })),
+      );
+    rows.push(
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+        removeMenu,
+      ) as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>,
+    );
+  }
+
+  const buttons = new ActionRowBuilder<ButtonBuilder>();
+  buttons.addComponents(
+    new ButtonBuilder()
+      .setCustomId(SETTINGS_TOGGLE_RESTRICT)
+      .setLabel(access.restrictToWhitelist ? "Disable restriction" : "Enable restriction")
+      .setStyle(access.restrictToWhitelist ? ButtonStyle.Secondary : ButtonStyle.Primary),
+  );
+  if (access.allowedUserIds.length > 0) {
+    buttons.addComponents(
+      new ButtonBuilder()
+        .setCustomId(SETTINGS_CLEAR_ALLOWED)
+        .setLabel("Clear whitelist")
+        .setStyle(ButtonStyle.Danger),
+    );
+  }
+  if (!access.ownerUserId) {
+    buttons.addComponents(
+      new ButtonBuilder()
+        .setCustomId(SETTINGS_CLAIM_OWNER)
+        .setLabel("Claim owner (me)")
+        .setStyle(ButtonStyle.Success),
+    );
+  } else {
+    buttons.addComponents(
+      new ButtonBuilder()
+        .setCustomId(SETTINGS_REMOVE_OWNER)
+        .setLabel("Remove owner")
+        .setStyle(ButtonStyle.Secondary),
+    );
+  }
+  buttons.addComponents(
+    new ButtonBuilder()
+      .setCustomId(SETTINGS_DETECT_OWNER)
+      .setLabel("Detect from app")
+      .setStyle(ButtonStyle.Secondary),
+  );
+  buttons.addComponents(
+    new ButtonBuilder()
+      .setCustomId(SETTINGS_REFRESH)
+      .setLabel("Refresh")
+      .setStyle(ButtonStyle.Secondary),
+  );
+  rows.push(buttons as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>);
+
+  return { embeds: [embed], components: rows };
+}
+
+async function rebuildSettingsPanel(
+  client: Client,
+  interaction: RepliableInteraction,
+): Promise<void> {
+  const access = currentAccess(client);
+  const panel = await buildSettingsPanel(client, access);
+  await interaction.editReply(panel);
+}
+
+function isSettingsInteraction(interaction: Interaction): boolean {
+  if (interaction.isChatInputCommand() && interaction.commandName === "settings") return true;
+  if (
+    interaction.isButton() ||
+    interaction.isStringSelectMenu() ||
+    interaction.isUserSelectMenu()
+  ) {
+    const id = (interaction as { customId?: string }).customId ?? "";
+    return id.startsWith("ar_settings_");
+  }
+  return false;
+}
+
+async function replyBlockedByWhitelist(
+  interaction: RepliableInteraction,
+  access: EffectiveAccess,
+): Promise<void> {
+  const contact = access.ownerUserId
+    ? ` Ask <@${access.ownerUserId}> to add you via \`/settings\`.`
+    : "";
+  const embed = new EmbedBuilder()
+    .setTitle("Access restricted")
+    .setDescription(`This bot is restricted to whitelisted users.${contact}`)
+    .setColor(0xed4245);
+  try {
+    if (interaction.deferred || interaction.replied) {
+      await interaction.editReply({ embeds: [embed], components: [] });
+    } else {
+      await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+    }
+  } catch {}
+}
+
+async function replyNotSettingsAuthorized(
+  interaction: RepliableInteraction,
+  access: EffectiveAccess,
+): Promise<void> {
+  const desc = access.ownerUserId
+    ? `Only the bot owner (<@${access.ownerUserId}>) can modify these settings.`
+    : "You need the **Administrator** permission to modify these settings until an owner is set.";
+  const embed = new EmbedBuilder()
+    .setTitle("Not authorized")
+    .setDescription(desc)
+    .setColor(0xed4245);
+  if (interaction.deferred || interaction.replied) {
+    await interaction.editReply({ embeds: [embed], components: [] });
+  } else {
+    await interaction.reply({ embeds: [embed], flags: MessageFlags.Ephemeral });
+  }
+}
 
 type ProjectOpenValidated = {
   settings: Settings;
@@ -497,6 +777,104 @@ export function registerHandlers(client: Client): void {
         return;
       }
 
+      /* Whitelist gate — applies to every interaction except /settings (so the
+         owner can always manage access). */
+      if (!isSettingsInteraction(interaction)) {
+        const access = currentAccess(client);
+        if (!isUserAllowed(interaction.user.id, access)) {
+          if (interaction.isRepliable()) {
+            await replyBlockedByWhitelist(interaction as RepliableInteraction, access);
+          }
+          return;
+        }
+      }
+
+      if (interaction.isUserSelectMenu()) {
+        if (
+          interaction.customId === SETTINGS_SET_OWNER ||
+          interaction.customId === SETTINGS_ADD_ALLOWED
+        ) {
+          await interaction.deferUpdate();
+          const access = currentAccess(client);
+          if (!isSettingsAuthorized(interaction, access)) {
+            await replyNotSettingsAuthorized(interaction, access);
+            return;
+          }
+          if (interaction.customId === SETTINGS_SET_OWNER) {
+            const picked = interaction.values[0];
+            if (picked) {
+              client.accessStore.setOwner(picked);
+            }
+          } else {
+            const picked = [...interaction.values];
+            if (picked.length > 0) client.accessStore.addAllowed(picked);
+          }
+          await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction);
+          return;
+        }
+      }
+
+      if (interaction.isStringSelectMenu() && interaction.customId === SETTINGS_REMOVE_ALLOWED) {
+        await interaction.deferUpdate();
+        const access = currentAccess(client);
+        if (!isSettingsAuthorized(interaction, access)) {
+          await replyNotSettingsAuthorized(interaction, access);
+          return;
+        }
+        const picked = [...interaction.values];
+        if (picked.length > 0) client.accessStore.removeAllowed(picked);
+        await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction);
+        return;
+      }
+
+      if (
+        interaction.isButton() &&
+        (interaction.customId === SETTINGS_TOGGLE_RESTRICT ||
+          interaction.customId === SETTINGS_CLEAR_ALLOWED ||
+          interaction.customId === SETTINGS_CLAIM_OWNER ||
+          interaction.customId === SETTINGS_REMOVE_OWNER ||
+          interaction.customId === SETTINGS_DETECT_OWNER ||
+          interaction.customId === SETTINGS_REFRESH)
+      ) {
+        await interaction.deferUpdate();
+        const access = currentAccess(client);
+        if (!isSettingsAuthorized(interaction, access)) {
+          await replyNotSettingsAuthorized(interaction, access);
+          return;
+        }
+        switch (interaction.customId) {
+          case SETTINGS_TOGGLE_RESTRICT:
+            client.accessStore.setRestrictToWhitelist(!access.restrictToWhitelist);
+            break;
+          case SETTINGS_CLEAR_ALLOWED:
+            client.accessStore.clearAllowed();
+            break;
+          case SETTINGS_CLAIM_OWNER:
+            client.accessStore.setOwner(interaction.user.id);
+            break;
+          case SETTINGS_REMOVE_OWNER:
+            client.accessStore.setOwner(null);
+            break;
+          case SETTINGS_DETECT_OWNER: {
+            try {
+              const app = await client.application!.fetch();
+              let detected: string | null = null;
+              if (app.owner instanceof Team) detected = app.owner.ownerId ?? null;
+              else if (app.owner) detected = app.owner.id;
+              if (detected) client.accessStore.setOwner(detected);
+            } catch (e) {
+              console.error(`Detect owner failed: ${String(e)}`);
+            }
+            break;
+          }
+          case SETTINGS_REFRESH:
+          default:
+            break;
+        }
+        await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction);
+        return;
+      }
+
       if (interaction.isButton()) {
         if (interaction.customId.startsWith(PROJECT_CREATE_YES)) {
           const nonce = interaction.customId.slice(PROJECT_CREATE_YES.length);
@@ -741,6 +1119,18 @@ export function registerHandlers(client: Client): void {
         return;
       }
 
+      if (interaction.commandName === "settings") {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+        const access = currentAccess(client);
+        if (!isSettingsAuthorized(interaction, access)) {
+          await replyNotSettingsAuthorized(interaction, access);
+          return;
+        }
+        const panel = await buildSettingsPanel(client, access);
+        await interaction.editReply(panel);
+        return;
+      }
+
       if (interaction.commandName === "project" && interaction.options.getSubcommand() === "open") {
         await interaction.deferReply({ flags: MessageFlags.Ephemeral });
         const v = await validateProjectOpenInteraction(interaction);
@@ -837,6 +1227,16 @@ export function registerHandlers(client: Client): void {
     if (processedMessages.size > 1000) {
       const toDelete = [...processedMessages].slice(0, 500);
       for (const id of toDelete) processedMessages.delete(id);
+    }
+
+    /* Whitelist gate — silently skip messages from users who aren't allowed.
+       React with a lock so the sender can see why the bot didn't respond. */
+    const access = currentAccess(client);
+    if (!isUserAllowed(message.author.id, access)) {
+      try {
+        await message.react("🔒");
+      } catch {}
+      return;
     }
 
     const threadCh = message.channel.isThread() ? message.channel : null;

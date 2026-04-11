@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { resolve } from "node:path";
 import { sanitizeDiscordCredential } from "./discord-input.js";
 import { resolveWorkspaceRootForRuntime } from "./workspace-root-resolve.js";
+import type { AccessEnvDefaults } from "./access-store.js";
 
 function tryLoadEnvFile(): void {
   const p = resolve(process.cwd(), ".env");
@@ -34,7 +35,23 @@ export interface Settings {
   encryptionKey: string;
   apiHost: string;
   apiPort: number;
+  accessEnvDefaults: AccessEnvDefaults;
   enabledProviderKeys(): string[];
+}
+
+function parseCsvIds(raw: string | undefined): string[] {
+  if (!raw) return [];
+  return raw
+    .split(",")
+    .map((s) => s.trim())
+    .filter((s) => s.length > 0 && /^\d+$/.test(s));
+}
+
+function parseBoolEnv(raw: string | undefined, defaultValue = false): boolean {
+  if (raw === undefined) return defaultValue;
+  const v = raw.trim().toLowerCase();
+  if (v === "") return defaultValue;
+  return v === "true" || v === "1" || v === "yes" || v === "on";
 }
 
 export function loadSettings(): Settings {
@@ -64,6 +81,11 @@ export function loadSettings(): Settings {
     encryptionKey: process.env.ENCRYPTION_KEY ?? "",
     apiHost: process.env.API_HOST ?? "0.0.0.0",
     apiPort: Number(process.env.API_PORT ?? "8000") || 8000,
+    accessEnvDefaults: {
+      ownerUserId: (process.env.BOT_OWNER_ID ?? "").trim(),
+      allowedUserIds: parseCsvIds(process.env.BOT_ALLOWED_USER_IDS),
+      restrictToWhitelist: parseBoolEnv(process.env.BOT_RESTRICT_TO_WHITELIST, true),
+    },
     enabledProviderKeys() {
       if (!enabledProviders) return [];
       return enabledProviders.split(",").map((k) => k.trim()).filter(Boolean);
