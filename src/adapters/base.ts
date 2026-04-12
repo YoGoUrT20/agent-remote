@@ -73,6 +73,10 @@ export abstract class BaseAdapter {
     return Promise.resolve(false);
   }
 
+  getSessionModel(_threadId: string): string | null {
+    return null;
+  }
+
   cancel(): Promise<void> {
     return Promise.resolve();
   }

@@ -130,6 +130,8 @@ interface ClaudeSessionContext {
   stopped: boolean;
   currentTurnId: string | null;
   threadTitle: string | null;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /* ── Adapter ── */
@@ -244,6 +246,8 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
       stopped: false,
       currentTurnId: null,
       threadTitle: null,
+      inputTokens: 0,
+      outputTokens: 0,
     };
 
     /* Consume the SDK stream in background */
@@ -313,19 +317,51 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
             );
           }
         }
+        /* Capture token usage from message_delta events */
+        if (ev.type === "message_delta") {
+          const usage = ev.usage as Record<string, unknown> | undefined;
+          if (usage) {
+            const outputTokens = typeof usage.output_tokens === "number" ? usage.output_tokens : 0;
+            if (outputTokens > 0) ctx.outputTokens = outputTokens;
+          }
+        }
+        /* Capture token usage from message_start events */
+        if (ev.type === "message_start") {
+          const msg = ev.message as Record<string, unknown> | undefined;
+          const usage = msg?.usage as Record<string, unknown> | undefined;
+          if (usage) {
+            const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
+            if (inputTokens > 0) ctx.inputTokens += inputTokens;
+          }
+        }
         return;
       }
       case "result": {
-        const resultMsg = message as SDKMessage & { session_id?: string };
+        const resultMsg = message as SDKMessage & { session_id?: string; usage?: Record<string, unknown> };
         if (resultMsg.session_id) {
           ctx.session.resumeCursor = resultMsg.session_id;
         }
-        /* Fetch thread title before signalling done */
+        /* Extract usage from result if present */
+        const resultAny = message as Record<string, unknown>;
+        const resultUsage = resultAny.usage as Record<string, unknown> | undefined;
+        if (resultUsage) {
+          if (typeof resultUsage.input_tokens === "number") ctx.inputTokens = resultUsage.input_tokens;
+          if (typeof resultUsage.output_tokens === "number") ctx.outputTokens = resultUsage.output_tokens;
+        }
+
+        const doneMeta: Record<string, unknown> = {};
+        if (ctx.inputTokens > 0) doneMeta.inputTokens = ctx.inputTokens;
+        if (ctx.outputTokens > 0) doneMeta.outputTokens = ctx.outputTokens;
+
         ctx.currentTurnId = null;
         ctx.session.status = "ready";
         ctx.session.activeTurnId = undefined;
         ctx.session.updatedAt = new Date().toISOString();
-        this._offerRuntimeEvent(makeEvent(EventType.DONE));
+        this._offerRuntimeEvent(makeEvent(EventType.DONE, "", Object.keys(doneMeta).length > 0 ? doneMeta : null));
+
+        /* Reset counters for next turn */
+        ctx.inputTokens = 0;
+        ctx.outputTokens = 0;
         return;
       }
       default:
@@ -431,6 +467,11 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
   getThreadTitle(threadId: string): string | null {
     const ctx = this._sessions.get(threadId);
     return ctx?.threadTitle ?? null;
+  }
+
+  override getSessionModel(threadId: string): string | null {
+    const ctx = this._sessions.get(threadId);
+    return ctx?.session.model ?? null;
   }
 
   getSessionId(threadId: string): string | null {

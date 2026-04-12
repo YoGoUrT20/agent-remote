@@ -67,7 +67,7 @@ export function loadSettings(): Settings {
     redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379/0",
     enabledProviders,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
-    claudeModel: process.env.CLAUDE_MODEL ?? "claude-sonnet-4-5-20250929",
+    claudeModel: process.env.CLAUDE_MODEL ?? "sonnet",
     claudeCodeBinaryPath: process.env.CLAUDE_CODE_BINARY_PATH ?? "",
     claudeWorkspaceCwd: resolveWorkspaceRootForRuntime(process.env.WORKSPACE_CWD ?? ""),
     claudeEffort: process.env.CLAUDE_EFFORT ?? "",

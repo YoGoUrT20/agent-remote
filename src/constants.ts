@@ -89,3 +89,27 @@ export function providerCategoryChannelName(provider: IdeProvider): string {
 }
 
 export const BOT_COMMANDS_CHANNEL = "bot-commands";
+
+/* ── Available models per provider ── */
+
+export interface ProviderModelDef {
+  value: string;
+  label: string;
+  isDefault?: boolean;
+}
+
+export const PROVIDER_MODELS: Record<string, ProviderModelDef[]> = {
+  claude: [
+    { value: "sonnet", label: "Sonnet 4.6", isDefault: true },
+    { value: "sonnet-1m", label: "Sonnet 4.6 (1M context)" },
+    { value: "opus", label: "Opus 4.6" },
+    { value: "opus-1m", label: "Opus 4.6 (1M context)" },
+    { value: "haiku", label: "Haiku 4.5" },
+  ],
+  codex: [
+    { value: "gpt-5.4", label: "GPT-5.4", isDefault: true },
+    { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
+    { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { value: "gpt-5.2", label: "GPT-5.2" },
+  ],
+};

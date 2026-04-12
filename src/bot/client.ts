@@ -13,6 +13,7 @@ import {
   defaultAccessStorePath,
   effectiveAccess,
 } from "../access-store.js";
+import { ModelStore, defaultModelStorePath } from "../model-store.js";
 
 export interface CreateClientOptions {
   onInstallComplete?: (() => void | Promise<void>) | null;
@@ -34,7 +35,9 @@ export function createClient(options: CreateClientOptions = {}): Client {
     join(process.env.HOME ?? process.env.USERPROFILE ?? ".", ".agent-remote", "sessions.json"),
   );
   client.accessStore = new AccessStore(defaultAccessStorePath());
+  client.modelStore = new ModelStore(defaultModelStorePath());
   client.pendingProjectCreates = new Map<string, PendingProjectCreate>();
+  client.modelOverrides = new Map<string, string>();
   client.onInstallComplete = options.onInstallComplete ?? null;
   registerHandlers(client);
   client.once(Events.ClientReady, async (c) => {

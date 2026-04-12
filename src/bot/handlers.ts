@@ -40,9 +40,12 @@ import { buildChatAdapter } from "../adapters/factory.js";
 import {
   BOT_COMMANDS_CHANNEL,
   PROVIDERS,
+  PROVIDER_MODELS,
+  resolvedProviderEmoji,
   resolvedProviderEmojiURL,
   normalizeCategoryChannelName,
   type ProviderKey,
+  type ProviderModelDef,
 } from "../constants.js";
 import { clearGuild, provisionGuild } from "../provisioner.js";
 import {
@@ -57,9 +60,17 @@ function persistSessionId(client: Client, threadId: string, adapter: BaseAdapter
   if ("getSessionId" in adapter && typeof adapter.getSessionId === "function") {
     const sid = adapter.getSessionId(threadId);
     if (sid) {
-      client.sessionStore.set(threadId, { sessionId: sid, cwd: cwd ?? "", providerKey });
+      const model = adapter.getSessionModel(threadId) ?? client.modelOverrides.get(threadId);
+      client.sessionStore.set(threadId, { sessionId: sid, cwd: cwd ?? "", providerKey, model: model ?? undefined });
     }
   }
+}
+
+function resolveModelLabel(pk: ProviderKey, modelValue: string | null | undefined): string {
+  if (!modelValue) return "";
+  const models = PROVIDER_MODELS[pk] ?? [];
+  const def = models.find((m) => m.value === modelValue);
+  return def ? def.label : modelValue;
 }
 
 const MAX_EMBED_DESC = 4080;
@@ -67,6 +78,8 @@ const PROJECT_OPEN_SELECT_ID = "ar_project_open_pick";
 const PROJECT_CREATE_YES = "ar_pc_yes:";
 const PROJECT_CREATE_NO = "ar_pc_no:";
 const PENDING_PROJECT_TTL_MS = 15 * 60 * 1000;
+
+const MODEL_SELECT_ID = "ar_model_pick";
 
 const SETTINGS_SET_OWNER = "ar_settings_set_owner";
 const SETTINGS_ADD_ALLOWED = "ar_settings_add_allowed";
@@ -77,6 +90,13 @@ const SETTINGS_CLAIM_OWNER = "ar_settings_claim_owner";
 const SETTINGS_REFRESH = "ar_settings_refresh";
 const SETTINGS_REMOVE_OWNER = "ar_settings_remove_owner";
 const SETTINGS_DETECT_OWNER = "ar_settings_detect_owner";
+
+const SETTINGS_TAB_ACCESS = "ar_settings_tab_access";
+const SETTINGS_TAB_MODELS = "ar_settings_tab_models";
+const SETTINGS_MODEL_SELECT = "ar_settings_model_select:";
+const SETTINGS_MODEL_RESET = "ar_settings_model_reset:";
+
+type SettingsTab = "access" | "models";
 
 const MAX_WHITELIST_REMOVE_OPTIONS = 25;
 
@@ -124,7 +144,26 @@ function bulletedMentionList(userIds: string[]): string {
   return userIds.map((id) => `• <@${id}>  \`${id}\``).join("\n");
 }
 
-async function buildSettingsPanel(
+/* ── Tab navigation row (shared between all /settings tabs) ── */
+
+function buildTabRow(activeTab: SettingsTab): ActionRowBuilder<ButtonBuilder> {
+  return new ActionRowBuilder<ButtonBuilder>().addComponents(
+    new ButtonBuilder()
+      .setCustomId(SETTINGS_TAB_ACCESS)
+      .setLabel("Access")
+      .setStyle(activeTab === "access" ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      .setDisabled(activeTab === "access"),
+    new ButtonBuilder()
+      .setCustomId(SETTINGS_TAB_MODELS)
+      .setLabel("Models")
+      .setStyle(activeTab === "models" ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      .setDisabled(activeTab === "models"),
+  );
+}
+
+/* ── Access tab ── */
+
+async function buildAccessPanel(
   client: Client,
   access: EffectiveAccess,
 ): Promise<BaseMessageOptions> {
@@ -177,7 +216,7 @@ async function buildSettingsPanel(
   ];
 
   const embed = new EmbedBuilder()
-    .setTitle("Access control — /settings")
+    .setTitle("Settings — Access")
     .setColor(access.restrictToWhitelist ? 0xfee75c : 0x5865f2)
     .setDescription(
       "Configure who is allowed to use this bot.\n" +
@@ -203,6 +242,7 @@ async function buildSettingsPanel(
   );
 
   const rows: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [
+    buildTabRow("access") as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>,
     setOwnerRow as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>,
     addAllowedRow as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>,
   ];
@@ -276,12 +316,114 @@ async function buildSettingsPanel(
   return { embeds: [embed], components: rows };
 }
 
+/* ── Models tab ── */
+
+function buildModelsPanel(client: Client): BaseMessageOptions {
+  const settings = loadSettings();
+  const enabledKeys = settings.enabledProviderKeys().length
+    ? settings.enabledProviderKeys()
+    : ["claude"];
+
+  const fields: APIEmbedField[] = [];
+  const rows: ActionRowBuilder<MessageActionRowComponentBuilder>[] = [
+    buildTabRow("models") as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>,
+  ];
+
+  for (const pk of enabledKeys) {
+    const provider = PROVIDERS[pk];
+    if (!provider) continue;
+    const models: ProviderModelDef[] = PROVIDER_MODELS[pk] ?? [];
+    if (models.length === 0) continue;
+
+    const envDefault = pk === "claude" ? settings.claudeModel : settings.codexModel;
+    const storeOverride = client.modelStore.getDefaultModel(pk);
+    const effective = storeOverride ?? envDefault;
+    const effectiveDef = models.find((m) => m.value === effective);
+    const effectiveLabel = effectiveDef
+      ? `**${effectiveDef.label}** (\`${effective}\`)`
+      : `\`${effective}\``;
+
+    const source = storeOverride ? "`/settings` override" : "env / default";
+    const emoji = resolvedProviderEmoji[pk as ProviderKey];
+    const fieldName = emoji ? `${emoji} ${provider.displayName}` : provider.displayName;
+
+    fields.push({
+      name: fieldName,
+      value: `${effectiveLabel}\nSource: ${source}`,
+      inline: false,
+    });
+
+    /* Only add select menus if we still have room (Discord max 5 action rows) */
+    if (rows.length < 5) {
+      const menu = new StringSelectMenuBuilder()
+        .setCustomId(`${SETTINGS_MODEL_SELECT}${pk}`)
+        .setPlaceholder(`Default model for ${provider.displayName}`)
+        .addOptions(
+          models.map((m) => ({
+            label: m.label,
+            value: m.value,
+            default: m.value === effective,
+          })),
+        );
+      rows.push(
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu) as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>,
+      );
+    }
+  }
+
+  /* Add reset buttons if overrides exist */
+  const resetButtons = new ActionRowBuilder<ButtonBuilder>();
+  let hasResets = false;
+  for (const pk of enabledKeys) {
+    if (client.modelStore.getDefaultModel(pk)) {
+      hasResets = true;
+      const provider = PROVIDERS[pk];
+      resetButtons.addComponents(
+        new ButtonBuilder()
+          .setCustomId(`${SETTINGS_MODEL_RESET}${pk}`)
+          .setLabel(`Reset ${provider?.displayName ?? pk}`)
+          .setStyle(ButtonStyle.Secondary),
+      );
+    }
+  }
+  if (hasResets && rows.length < 5) {
+    rows.push(resetButtons as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>);
+  }
+
+  const embed = new EmbedBuilder()
+    .setTitle("Settings — Models")
+    .setColor(0x5865f2)
+    .setDescription(
+      "Set the default AI model for each provider. These defaults apply to all new sessions.\n" +
+        "Per-session overrides can be set with `/model` in a project channel or thread.",
+    )
+    .addFields(fields);
+
+  if (fields.length === 0) {
+    embed.setDescription("No providers with configurable models are currently enabled.");
+  }
+
+  return { embeds: [embed], components: rows };
+}
+
+/* ── Build settings panel (dispatches to active tab) ── */
+
+async function buildSettingsPanel(
+  client: Client,
+  access: EffectiveAccess,
+  tab: SettingsTab = "access",
+): Promise<BaseMessageOptions> {
+  if (tab === "models") return buildModelsPanel(client);
+  return buildAccessPanel(client, access);
+}
+
 async function rebuildSettingsPanel(
   client: Client,
   interaction: RepliableInteraction,
+  tab: SettingsTab = "access",
 ): Promise<void> {
   const access = currentAccess(client);
-  const panel = await buildSettingsPanel(client, access);
+  const panel = await buildSettingsPanel(client, access, tab);
   await interaction.editReply(panel);
 }
 
@@ -621,18 +763,18 @@ async function offerOrOpenProject(
 async function streamAssistantRepliesEmbed(
   thread: ThreadChannel,
   adapter: BaseAdapter,
-  options: { fallbackThreadTitle: string; providerKey: ProviderKey; skipRename?: boolean },
+  options: { fallbackThreadTitle: string; providerKey: ProviderKey; skipRename?: boolean; modelLabel?: string },
 ): Promise<void> {
-  const { fallbackThreadTitle, providerKey, skipRename = false } = options;
+  const { fallbackThreadTitle, providerKey, skipRename = false, modelLabel } = options;
   let reasoning = "";
   let response = "";
   let lastEdit = 0;
   let named = skipRename;
   let hasError = false;
+  const turnStartTime = performance.now();
 
   const provider = PROVIDERS[providerKey];
   const providerName = provider?.displayName ?? providerKey;
-
 
   const formatBody = (): string => {
     let body = "";
@@ -645,13 +787,36 @@ async function streamAssistantRepliesEmbed(
   };
 
   const emojiURL = resolvedProviderEmojiURL[providerKey];
-  const buildEmbed = (description: string, color: number) => {
+
+  const buildFooter = (stats?: { inputTokens?: number; outputTokens?: number; elapsed?: number }): { text: string; iconURL?: string } | null => {
+    const parts: string[] = [];
+    if (modelLabel) parts.push(modelLabel);
+    if (stats?.elapsed != null) {
+      const secs = stats.elapsed;
+      parts.push(secs >= 60 ? `${Math.floor(secs / 60)}m ${Math.round(secs % 60)}s` : `${secs.toFixed(1)}s`);
+    }
+    if (stats?.outputTokens) {
+      const tok = stats.outputTokens;
+      if (stats.elapsed && stats.elapsed > 0) {
+        const tps = tok / stats.elapsed;
+        parts.push(`${tok.toLocaleString()} tokens (${tps.toFixed(1)} tok/s)`);
+      } else {
+        parts.push(`${tok.toLocaleString()} tokens`);
+      }
+    }
+    if (parts.length === 0) return null;
+    return { text: parts.join("  ·  "), ...(emojiURL ? { iconURL: emojiURL } : {}) };
+  };
+
+  const buildEmbed = (description: string, color: number, stats?: { inputTokens?: number; outputTokens?: number; elapsed?: number }) => {
     const embed = new EmbedBuilder()
       .setColor(color)
       .setAuthor({ name: providerName, ...(emojiURL ? { iconURL: emojiURL } : {}) })
       .setDescription(
         description.length > MAX_EMBED_DESC ? `${description.slice(0, MAX_EMBED_DESC)}…` : description,
       );
+    const footer = buildFooter(stats);
+    if (footer) embed.setFooter(footer);
     return embed;
   };
 
@@ -692,11 +857,16 @@ async function streamAssistantRepliesEmbed(
       }
       hasError = true;
     } else if (event.type === "done") {
+      const elapsed = (performance.now() - turnStartTime) / 1000;
+      const inputTokens = typeof event.metadata?.inputTokens === "number" ? event.metadata.inputTokens : undefined;
+      const outputTokens = typeof event.metadata?.outputTokens === "number" ? event.metadata.outputTokens : undefined;
+      const stats = { inputTokens, outputTokens, elapsed };
+
       if (!hasError) {
         const body = formatBody();
         try {
           await statusMsg.edit({
-            embeds: [buildEmbed(body || "Done.", 0x57f287)],
+            embeds: [buildEmbed(body || "Done.", 0x57f287, stats)],
           });
         } catch {
         }
@@ -773,6 +943,41 @@ export function registerHandlers(client: Client): void {
           await interaction.respond(choices);
           return;
         }
+        if (interaction.commandName === "model") {
+          const focused = interaction.options.getFocused(true);
+          if (focused.name !== "name") {
+            await interaction.respond([]);
+            return;
+          }
+          /* Determine provider from the channel context */
+          const ch = interaction.channel;
+          let pk: ProviderKey | null = null;
+          if (ch?.isThread()) {
+            const parent = ch.parent;
+            if (parent && parent.type === ChannelType.GuildText) {
+              const cat = categoryFromProjectParent(parent);
+              pk = providerKeyFromCategory(cat);
+            }
+          } else if (ch && ch.type === ChannelType.GuildText) {
+            const cat = ch.parent;
+            if (cat && cat.type === ChannelType.GuildCategory) {
+              pk = providerKeyFromCategory(cat);
+            }
+          }
+          const models = pk ? (PROVIDER_MODELS[pk] ?? []) : [];
+          const needle = focused.value.trim().toLowerCase();
+          const filtered = needle.length > 0
+            ? models.filter((m) => m.label.toLowerCase().includes(needle) || m.value.toLowerCase().includes(needle))
+            : models;
+          await interaction.respond(
+            filtered.slice(0, 25).map((m) => ({
+              name: m.label,
+              value: m.value,
+            })),
+          );
+          return;
+        }
+
         await interaction.respond([]);
         return;
       }
@@ -871,7 +1076,52 @@ export function registerHandlers(client: Client): void {
           default:
             break;
         }
-        await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction);
+        await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction, "access");
+        return;
+      }
+
+      /* ── Settings tab navigation ── */
+      if (
+        interaction.isButton() &&
+        (interaction.customId === SETTINGS_TAB_ACCESS || interaction.customId === SETTINGS_TAB_MODELS)
+      ) {
+        await interaction.deferUpdate();
+        const access = currentAccess(client);
+        if (!isSettingsAuthorized(interaction, access)) {
+          await replyNotSettingsAuthorized(interaction, access);
+          return;
+        }
+        const tab: SettingsTab = interaction.customId === SETTINGS_TAB_MODELS ? "models" : "access";
+        await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction, tab);
+        return;
+      }
+
+      /* ── Settings model reset buttons ── */
+      if (interaction.isButton() && interaction.customId.startsWith(SETTINGS_MODEL_RESET)) {
+        await interaction.deferUpdate();
+        const access = currentAccess(client);
+        if (!isSettingsAuthorized(interaction, access)) {
+          await replyNotSettingsAuthorized(interaction, access);
+          return;
+        }
+        const pk = interaction.customId.slice(SETTINGS_MODEL_RESET.length);
+        client.modelStore.setDefaultModel(pk, null);
+        await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction, "models");
+        return;
+      }
+
+      /* ── Settings model select menus ── */
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith(SETTINGS_MODEL_SELECT)) {
+        await interaction.deferUpdate();
+        const access = currentAccess(client);
+        if (!isSettingsAuthorized(interaction, access)) {
+          await replyNotSettingsAuthorized(interaction, access);
+          return;
+        }
+        const pk = interaction.customId.slice(SETTINGS_MODEL_SELECT.length);
+        const picked = interaction.values[0];
+        if (picked) client.modelStore.setDefaultModel(pk, picked);
+        await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction, "models");
         return;
       }
 
@@ -1066,6 +1316,70 @@ export function registerHandlers(client: Client): void {
         }
       }
 
+      if (interaction.isStringSelectMenu() && interaction.customId === MODEL_SELECT_ID) {
+        await interaction.deferUpdate();
+        const picked = interaction.values[0];
+        if (!picked) return;
+
+        /* Determine provider from channel context */
+        const ch = interaction.channel;
+        let pk: ProviderKey | null = null;
+        const isThread = !!ch?.isThread();
+        if (isThread) {
+          const parent = ch!.parent;
+          if (parent && parent.type === ChannelType.GuildText) {
+            const cat = categoryFromProjectParent(parent);
+            pk = providerKeyFromCategory(cat);
+          }
+        } else if (ch && ch.type === ChannelType.GuildText) {
+          const cat = ch.parent;
+          if (cat && cat.type === ChannelType.GuildCategory) pk = providerKeyFromCategory(cat);
+        }
+        const models = pk ? (PROVIDER_MODELS[pk] ?? []) : [];
+        const modelDef = models.find((m) => m.value === picked);
+        const label = modelDef?.label ?? picked;
+
+        const targetId = isThread ? ch!.id : ch?.id ?? null;
+        if (!targetId) {
+          await interaction.editReply({
+            embeds: [
+              new EmbedBuilder()
+                .setTitle("Could not determine channel")
+                .setDescription("Unable to resolve channel context. Try again.")
+                .setColor(0xed4245),
+            ],
+            components: [],
+          });
+          return;
+        }
+
+        client.modelOverrides.set(targetId, picked);
+
+        /* If in a thread with an active session whose model differs, stop it */
+        if (isThread) {
+          const sess = client.chatRegistry.get(targetId);
+          if (sess) {
+            const currentModel = sess.adapter.getSessionModel(targetId);
+            if (currentModel && currentModel !== picked) {
+              try {
+                await sess.adapter.stopSession(targetId);
+              } catch {}
+              client.chatRegistry.remove(targetId);
+            }
+          }
+        }
+
+        const contextHint = isThread
+          ? "Takes effect on your next message."
+          : "Will apply to the next new session you start in this channel.";
+        const embed = new EmbedBuilder()
+          .setTitle("Model updated")
+          .setDescription(`Switched to **${label}** (\`${picked}\`). ${contextHint}`)
+          .setColor(0x57f287);
+        await interaction.editReply({ embeds: [embed], components: [] });
+        return;
+      }
+
       if (interaction.isStringSelectMenu() && interaction.customId === PROJECT_OPEN_SELECT_ID) {
         await interaction.deferUpdate();
         const v = await validateProjectOpenInteraction(interaction, { components: [] });
@@ -1128,6 +1442,135 @@ export function registerHandlers(client: Client): void {
         }
         const panel = await buildSettingsPanel(client, access);
         await interaction.editReply(panel);
+        return;
+      }
+
+      if (interaction.commandName === "model") {
+        await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+        /* Determine provider from channel context */
+        const ch = interaction.channel;
+        let pk: ProviderKey | null = null;
+        let threadId: string | null = null;
+
+        if (ch?.isThread()) {
+          threadId = ch.id;
+          const parent = ch.parent;
+          if (parent && parent.type === ChannelType.GuildText) {
+            const cat = categoryFromProjectParent(parent);
+            pk = providerKeyFromCategory(cat);
+          }
+        } else if (ch && ch.type === ChannelType.GuildText) {
+          const cat = ch.parent;
+          if (cat && cat.type === ChannelType.GuildCategory) pk = providerKeyFromCategory(cat);
+        }
+
+        if (!pk) {
+          await replyEphemeralEmbed(interaction, {
+            title: "Not in a provider channel",
+            description: "Use `/model` from a project channel or session thread under a provider category.",
+            ok: false,
+          });
+          return;
+        }
+
+        /* targetId = thread ID (if in thread) or channel ID (if in project channel) */
+        const targetId = threadId ?? ch?.id ?? null;
+        const isThread = !!threadId;
+
+        const models = PROVIDER_MODELS[pk] ?? [];
+        const pickedModel = (interaction.options.getString("name") ?? "").trim();
+
+        if (!pickedModel) {
+          /* No argument — show current model + dropdown */
+          const sess = isThread ? client.chatRegistry.get(threadId!) : null;
+          const override = targetId ? client.modelOverrides.get(targetId) : null;
+          const settings = loadSettings();
+          const envDefault = pk === "claude" ? settings.claudeModel : settings.codexModel;
+          const storeDefault = client.modelStore.getDefaultModel(pk);
+          const currentModel =
+            override ??
+            (sess ? sess.adapter.getSessionModel(threadId!) : null) ??
+            storeDefault ??
+            envDefault;
+
+          const currentDef = models.find((m) => m.value === currentModel);
+          const currentLabel = currentDef ? `**${currentDef.label}** (\`${currentModel}\`)` : `\`${currentModel}\``;
+
+          const providerName = PROVIDERS[pk]?.displayName ?? pk;
+          const emojiURL = resolvedProviderEmojiURL[pk];
+
+          const contextHint = isThread
+            ? "Takes effect on your next message in this thread."
+            : "Will apply to the next new session you start in this channel.";
+
+          const embed = new EmbedBuilder()
+            .setColor(0x5865f2)
+            .setAuthor({ name: providerName, ...(emojiURL ? { iconURL: emojiURL } : {}) })
+            .setTitle("Current model")
+            .setDescription(`${currentLabel}\n\nSelect a different model below. ${contextHint}`);
+
+          if (models.length === 0) {
+            embed.setDescription(`${currentLabel}\n\nNo predefined models for this provider. Use \`/model name:<model>\` to set one manually.`);
+            await interaction.editReply({ embeds: [embed] });
+            return;
+          }
+
+          const menu = new StringSelectMenuBuilder()
+            .setCustomId(MODEL_SELECT_ID)
+            .setPlaceholder("Select a model…")
+            .addOptions(
+              models.map((m) => ({
+                label: m.label,
+                value: m.value,
+                default: m.value === currentModel,
+              })),
+            );
+          const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu);
+          await interaction.editReply({
+            embeds: [embed],
+            components: [row as unknown as ActionRowBuilder<MessageActionRowComponentBuilder>],
+          });
+          return;
+        }
+
+        /* Direct argument — set the model */
+        if (!targetId) {
+          await replyEphemeralEmbed(interaction, {
+            title: "Could not determine channel",
+            description: "Unable to resolve channel context. Try again from a project channel or thread.",
+            ok: false,
+          });
+          return;
+        }
+
+        const modelDef = models.find((m) => m.value === pickedModel);
+        const label = modelDef?.label ?? pickedModel;
+
+        client.modelOverrides.set(targetId, pickedModel);
+
+        /* If in a thread with an active session whose model differs, stop it */
+        if (isThread) {
+          const sess = client.chatRegistry.get(threadId!);
+          if (sess) {
+            const currentModel = sess.adapter.getSessionModel(threadId!);
+            if (currentModel && currentModel !== pickedModel) {
+              try {
+                await sess.adapter.stopSession(threadId!);
+              } catch {}
+              client.chatRegistry.remove(threadId!);
+            }
+          }
+        }
+
+        const contextHint = isThread
+          ? "Takes effect on your next message."
+          : "Will apply to the next new session you start in this channel.";
+        await replyEphemeralEmbed(interaction, {
+          title: "Model updated",
+          description: `Switched to **${label}** (\`${pickedModel}\`). ${contextHint}`,
+          ok: true,
+        });
         return;
       }
 
@@ -1251,7 +1694,26 @@ export function registerHandlers(client: Client): void {
       if (!text) return;
       let sess = client.chatRegistry.get(threadCh.id);
 
-      /* Session missing (e.g. bot restarted) — resume from persisted session */
+      /* Restore persisted model override if not already set in-memory */
+      if (!client.modelOverrides.has(threadCh.id)) {
+        const persisted = client.sessionStore.get(threadCh.id);
+        if (persisted?.model) client.modelOverrides.set(threadCh.id, persisted.model);
+      }
+
+      /* Check if model override requires session restart */
+      const modelOverride = client.modelOverrides.get(threadCh.id);
+      if (sess && modelOverride) {
+        const currentModel = sess.adapter.getSessionModel(threadCh.id);
+        if (currentModel && currentModel !== modelOverride) {
+          try {
+            await sess.adapter.stopSession(threadCh.id);
+          } catch {}
+          client.chatRegistry.remove(threadCh.id);
+          sess = undefined;
+        }
+      }
+
+      /* Session missing (e.g. bot restarted or model changed) — resume from persisted session */
       if (!sess) {
         const settings = loadSettings();
         let enabledList = settings.enabledProviderKeys();
@@ -1261,9 +1723,11 @@ export function registerHandlers(client: Client): void {
           const adapter = buildChatAdapter(pk, settings);
           const cwdOpt = projectWorkspaceCwd(settings, parent.name);
           const persisted = client.sessionStore.get(threadCh.id);
+          const sessionModel = modelOverride ?? client.modelStore.getDefaultModel(pk) ?? undefined;
           await adapter.startSession({
             threadId: threadCh.id,
             cwd: cwdOpt,
+            model: sessionModel,
             resumeCursor: persisted?.sessionId,
           });
           sess = { providerKey: pk, adapter };
@@ -1288,10 +1752,12 @@ export function registerHandlers(client: Client): void {
         try {
           await threadCh.sendTyping();
           await session.adapter.sendTurn({ threadId: threadCh.id, input: text });
+          const activeModel = session.adapter.getSessionModel(threadCh.id) ?? client.modelOverrides.get(threadCh.id);
           await streamAssistantRepliesEmbed(threadCh, session.adapter, {
             fallbackThreadTitle: threadCh.name,
             providerKey: pk,
             skipRename: true,
+            modelLabel: resolveModelLabel(pk, activeModel),
           });
           persistSessionId(client, threadCh.id, session.adapter, pk);
         } catch (e) {
@@ -1355,15 +1821,23 @@ export function registerHandlers(client: Client): void {
     try {
       adapter = buildChatAdapter(pk, settings);
       const cwdOpt = projectWorkspaceCwd(settings, message.channel.name);
-      await adapter.startSession({ threadId: thread.id, cwd: cwdOpt });
+      /* Model resolution order: channel /model override → /settings default → env/config default */
+      const channelModelOverride =
+        client.modelOverrides.get(message.channel.id) ??
+        client.modelStore.getDefaultModel(pk);
+      await adapter.startSession({ threadId: thread.id, cwd: cwdOpt, model: channelModelOverride });
       await adapter.sendTurn({ threadId: thread.id, input: text });
       const session = { providerKey: pk, adapter };
       client.chatRegistry.add(thread.id, session);
+      /* Propagate channel-level model override to the thread so subsequent /model checks work */
+      if (channelModelOverride) client.modelOverrides.set(thread.id, channelModelOverride);
       adapter = null;
       await runSerial(thread.id, async () => {
+        const newSessionModel = session.adapter.getSessionModel(thread.id) ?? channelModelOverride;
         await streamAssistantRepliesEmbed(thread, session.adapter, {
           fallbackThreadTitle: text,
           providerKey: pk,
+          modelLabel: resolveModelLabel(pk, newSessionModel),
         });
         persistSessionId(client, thread.id, session.adapter, pk);
       });

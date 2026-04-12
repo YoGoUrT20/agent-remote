@@ -29,7 +29,18 @@ export function buildSlashCommandBodies(): ReturnType<SlashCommandBuilder["toJSO
     .setDescription("Open the agent-remote access-control panel (owner only)")
     .setDefaultMemberPermissions(PermissionFlagsBits.Administrator);
 
-  return [install.toJSON(), project.toJSON(), settings.toJSON()];
+  const model = new SlashCommandBuilder()
+    .setName("model")
+    .setDescription("View or change the AI model for this session")
+    .addStringOption((o) =>
+      o
+        .setName("name")
+        .setDescription("Model name to switch to")
+        .setRequired(false)
+        .setAutocomplete(true),
+    );
+
+  return [install.toJSON(), project.toJSON(), settings.toJSON(), model.toJSON()];
 }
 
 export async function deployGuildCommands(

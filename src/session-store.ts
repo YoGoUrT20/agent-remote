@@ -5,6 +5,8 @@ export interface PersistedSession {
   sessionId: string;
   cwd: string;
   providerKey: string;
+  /** Last model used for this session (persisted so /model survives restarts). */
+  model?: string;
 }
 
 /**

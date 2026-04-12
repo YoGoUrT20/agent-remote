@@ -55,6 +55,8 @@ interface CodexSessionContext {
   threadTitle: string | null;
   providerThreadId: string | null;
   stopped: boolean;
+  inputTokens: number;
+  outputTokens: number;
 }
 
 /* ── Adapter ── */
@@ -130,6 +132,8 @@ export class CodexCliAdapter extends BaseAdapter {
       threadTitle: null,
       providerThreadId: null,
       stopped: false,
+      inputTokens: 0,
+      outputTokens: 0,
     };
 
     this._sessions.set(input.threadId, ctx);
@@ -335,6 +339,11 @@ export class CodexCliAdapter extends BaseAdapter {
     return ctx?.threadTitle ?? null;
   }
 
+  override getSessionModel(threadId: string): string | null {
+    const ctx = this._sessions.get(threadId);
+    return ctx?.session.model ?? null;
+  }
+
   getSessionId(threadId: string): string | null {
     const ctx = this._sessions.get(threadId);
     return ctx?.providerThreadId ?? null;
@@ -476,11 +485,28 @@ export class CodexCliAdapter extends BaseAdapter {
           ctx.threadTitle = title.trim();
         }
 
+        /* Extract token usage if available */
+        const usage = params.usage as Record<string, unknown> | undefined;
+        if (usage) {
+          if (typeof usage.input_tokens === "number") ctx.inputTokens = usage.input_tokens;
+          else if (typeof usage.prompt_tokens === "number") ctx.inputTokens = usage.prompt_tokens;
+          if (typeof usage.output_tokens === "number") ctx.outputTokens = usage.output_tokens;
+          else if (typeof usage.completion_tokens === "number") ctx.outputTokens = usage.completion_tokens;
+        }
+
+        const doneMeta: Record<string, unknown> = {};
+        if (ctx.inputTokens > 0) doneMeta.inputTokens = ctx.inputTokens;
+        if (ctx.outputTokens > 0) doneMeta.outputTokens = ctx.outputTokens;
+
         ctx.currentTurnId = null;
         ctx.session.status = "ready";
         ctx.session.activeTurnId = undefined;
         ctx.session.updatedAt = new Date().toISOString();
-        this._offerRuntimeEvent(makeEvent(EventType.DONE));
+        this._offerRuntimeEvent(makeEvent(EventType.DONE, "", Object.keys(doneMeta).length > 0 ? doneMeta : null));
+
+        /* Reset counters for next turn */
+        ctx.inputTokens = 0;
+        ctx.outputTokens = 0;
         return;
       }
 
