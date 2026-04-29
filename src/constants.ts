@@ -35,6 +35,13 @@ export const PROVIDERS: Record<string, IdeProvider> = {
     envKeys: [],
     description: "Antigravity bridge (vendor-specific)",
   },
+  opencode: {
+    key: "opencode",
+    displayName: "OpenCode",
+    categoryName: "OpenCode",
+    envKeys: [],
+    description: "OpenCode CLI (sst/opencode); uses local auth via `opencode auth`",
+  },
 } satisfies Record<string, IdeProvider>;
 
 export type ProviderKey = keyof typeof PROVIDERS;
@@ -45,6 +52,7 @@ export const PROVIDER_EMOJI_NAMES: Partial<Record<ProviderKey, string>> = {
   codex: "ar_codex",
   cursor: "ar_cursor",
   antigravity: "ar_antigravity",
+  opencode: "ar_opencode",
 };
 
 /** Provider → filename inside src/public/ */
@@ -53,6 +61,7 @@ export const PROVIDER_EMOJI_FILES: Partial<Record<ProviderKey, string>> = {
   codex: "codex.png",
   cursor: "cursor.png",
   antigravity: "antigravity.png",
+  opencode: "opencode.png",
 };
 
 /**
@@ -68,8 +77,9 @@ export const resolvedProviderEmojiURL: Partial<Record<ProviderKey, string>> = {}
 export const PROVIDER_CATEGORY_NAME_UNICODE_PREFIX: Partial<Record<ProviderKey, string>> = {
   claude: "🟠",
   codex: "🧩",
-  cursor: "💻",
-  antigravity: "🛸",
+  cursor: "⬜",
+  antigravity: "🔵",
+  opencode: "⚫",
 };
 
 export function normalizeCategoryChannelName(name: string): string {
@@ -111,5 +121,13 @@ export const PROVIDER_MODELS: Record<string, ProviderModelDef[]> = {
     { value: "gpt-5.4-mini", label: "GPT-5.4 Mini" },
     { value: "gpt-5.3-codex", label: "GPT-5.3 Codex" },
     { value: "gpt-5.2", label: "GPT-5.2" },
+  ],
+  opencode: [
+    { value: "opencode/claude-sonnet-4-6", label: "Claude Sonnet 4.6", isDefault: true },
+    { value: "opencode/claude-opus-4-7", label: "Claude Opus 4.7" },
+    { value: "opencode/claude-haiku-4-5", label: "Claude Haiku 4.5" },
+    { value: "opencode/gpt-5.4", label: "GPT-5.4" },
+    { value: "opencode/gpt-5.3-codex", label: "GPT-5.3 Codex" },
+    { value: "opencode/gemini-3.1-pro", label: "Gemini 3.1 Pro" },
   ],
 };

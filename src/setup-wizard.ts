@@ -81,7 +81,7 @@ async function stepWelcome(): Promise<void> {
   console.log("You will need:");
   console.log("  1. A Discord application (bot token + app ID)");
   console.log("  2. A dedicated Discord server (guild ID)");
-  console.log("  3. PostgreSQL and Redis connection URLs");
+  console.log("  3. PostgreSQL connection URL");
   console.log("");
 }
 
@@ -181,24 +181,17 @@ async function stepDiscord(): Promise<{ botToken: string; appId: string; guildId
 
 async function stepInfrastructure(): Promise<{
   dbUrl: string;
-  redisUrl: string;
   workspaceCwd: string;
 }> {
   stepTitle(4, "Infrastructure");
   const defaultWorkspace = normalize(resolve(process.cwd(), ".."));
-  const infra = await prompts<"dbUrl" | "redisUrl" | "workspaceDir">(
+  const infra = await prompts<"dbUrl" | "workspaceDir">(
     [
       {
         type: "text",
         name: "dbUrl",
         message: "PostgreSQL URL:",
         initial: "postgresql+asyncpg://agent_remote:agent_remote@localhost:5432/agent_remote",
-      },
-      {
-        type: "text",
-        name: "redisUrl",
-        message: "Redis URL:",
-        initial: "redis://localhost:6379/0",
       },
       {
         type: "text",
@@ -210,13 +203,12 @@ async function stepInfrastructure(): Promise<{
     cancelOpts,
   );
   const dbUrl = infra.dbUrl ?? "";
-  const redisUrl = infra.redisUrl ?? "";
   const workspaceRaw = (infra.workspaceDir ?? "").trim();
   const workspaceCwd = workspaceRaw
     ? normalizeWorkspacePath(workspaceRaw)
     : defaultWorkspace;
   console.log("\nInfrastructure configured.");
-  return { dbUrl, redisUrl, workspaceCwd };
+  return { dbUrl, workspaceCwd };
 }
 
 async function stepWriteEnv(args: {
@@ -224,7 +216,6 @@ async function stepWriteEnv(args: {
   appId: string;
   guildId: string;
   dbUrl: string;
-  redisUrl: string;
   workspaceCwd: string;
   enabled: ProviderKey[];
   ownerUserId: string;
@@ -235,7 +226,6 @@ async function stepWriteEnv(args: {
     appId,
     guildId,
     dbUrl,
-    redisUrl,
     workspaceCwd,
     enabled,
     ownerUserId,
@@ -258,7 +248,6 @@ async function stepWriteEnv(args: {
     "",
     "# Infrastructure",
     `DATABASE_URL=${dbUrl}`,
-    `REDIS_URL=${redisUrl}`,
     "",
     "# Workspace",
     `WORKSPACE_CWD=${formatDotenvPathValue(workspaceCwd)}`,
@@ -381,13 +370,12 @@ export async function runWizard(): Promise<void> {
     }
     console.log("\nBot starting in background...");
     const { ownerUserId, restrictToWhitelist } = await stepAccessControl();
-    const { dbUrl, redisUrl, workspaceCwd } = await stepInfrastructure();
+    const { dbUrl, workspaceCwd } = await stepInfrastructure();
     await stepWriteEnv({
       botToken,
       appId,
       guildId,
       dbUrl,
-      redisUrl,
       workspaceCwd,
       enabled,
       ownerUserId,

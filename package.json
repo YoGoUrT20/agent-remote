@@ -11,7 +11,8 @@
     "setup": "bun src/cli.ts setup",
     "migrate": "bun src/cli.ts migrate",
     "api": "bun src/cli.ts api",
-    "check": "bunx tsc --noEmit"
+    "check": "bunx tsc --noEmit",
+    "test": "bun test"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.92",

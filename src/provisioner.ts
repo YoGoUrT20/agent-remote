@@ -13,6 +13,7 @@ import {
   providerCategoryChannelName,
   type ProviderKey,
 } from "./constants.js";
+import type { Client } from "discord.js";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -90,10 +91,12 @@ export async function syncProviderEmoji(guild: Guild): Promise<void> {
         resolvedProviderEmojiURL[key as ProviderKey] = `https://cdn.discordapp.com/emojis/${found.id}.png`;
       }
     }
-  } catch {}
+  } catch { }
 }
 
+
 export async function provisionGuild(
+  client: Client,
   guild: Guild,
   enabledKeys: string[],
   { pruneDisabled = false }: { pruneDisabled?: boolean } = {},
@@ -132,6 +135,11 @@ export async function provisionGuild(
       existingCategories.delete(prev);
       existingCategories.set(decorated, category);
     }
+
+    client.projectStore.set(category.id, {
+      channelId: category.id,
+      createdAt: Date.now(),
+    });
 
     const existingUnder = new Set(category.children.cache.map((c) => c.name));
 

@@ -1,7 +1,7 @@
 import { join } from "node:path";
 import { Client, Events, GatewayIntentBits, Partials, Team } from "discord.js";
 import { bunRestOptions } from "./bun-rest.js";
-import { registerHandlers } from "./handlers.js";
+import { registerHandlers } from "./handlers/index.js";
 import { ChatRegistry } from "./registry.js";
 import type { PendingProjectCreate } from "./pending-project.js";
 import { logErr, logOut } from "../stdio-log.js";
@@ -14,6 +14,7 @@ import {
   effectiveAccess,
 } from "../access-store.js";
 import { ModelStore, defaultModelStorePath } from "../model-store.js";
+import { ProjectStore } from "../project-store.js";
 
 export interface CreateClientOptions {
   onInstallComplete?: (() => void | Promise<void>) | null;
@@ -36,6 +37,9 @@ export function createClient(options: CreateClientOptions = {}): Client {
   );
   client.accessStore = new AccessStore(defaultAccessStorePath());
   client.modelStore = new ModelStore(defaultModelStorePath());
+  client.projectStore = new ProjectStore(
+    join(process.env.HOME ?? process.env.USERPROFILE ?? ".", ".agent-remote", "projects.json"),
+  );
   client.pendingProjectCreates = new Map<string, PendingProjectCreate>();
   client.modelOverrides = new Map<string, string>();
   client.onInstallComplete = options.onInstallComplete ?? null;

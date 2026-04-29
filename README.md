@@ -12,8 +12,8 @@ Each message in a project channel starts a new agent session and a live-updating
 
 | Status | Provider |
 | --- | --- |
-| **Supported** | Claude Code, Codex |
-| **Planned** | Antigravity, Cursor, OpenCode, Kiro |
+| **Supported** | Claude Code, Codex, OpenCode |
+| **Planned** | Antigravity, Cursor, Kiro |
 
 Adding a new provider means implementing a single adapter against the `BaseAdapter` interface — the bot, provisioner, and thread system work the same regardless of backend.
 
@@ -57,6 +57,7 @@ src/
 │   ├── base.ts             # BaseAdapter interface & event types
 │   ├── claude.ts           # Claude Code — Anthropic Agent SDK
 │   ├── codex.ts            # Codex — JSON-RPC over subprocess
+│   ├── opencode.ts         # OpenCode — `opencode run` JSON events per turn
 │   └── factory.ts          # Routes provider key → adapter
 └── bot/
     ├── client.ts           # Discord client bootstrap
@@ -84,7 +85,6 @@ src/
 ### In progress
 - [ ] **Cursor adapter** — bridge integration for Cursor agent sessions
 - [ ] **Antigravity adapter** — vendor-specific bridge for Antigravity
-- [ ] **OpenCode adapter** — support for the OpenCode CLI
 
 ### Planned
 - [ ] **Attachments & images** — forward Discord file uploads to agent sessions as context
@@ -94,5 +94,7 @@ src/
 - [ ] **Web dashboard** — lightweight UI to monitor active sessions, view logs, and manage providers without Discord
 - [ ] **`/session` command** — inspect, interrupt, or restart the current agent session from Discord
 - [ ] **Cost tracking** — surface token usage and estimated cost per session in the thread
+- [ ] **Voicemessages support** — allow Discord voice messages as user input.
+
 
 

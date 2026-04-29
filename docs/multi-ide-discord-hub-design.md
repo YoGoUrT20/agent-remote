@@ -6,7 +6,7 @@ This document describes an **open source, self-hostable** system: operators run 
 
 ## 1. Goals
 
-- **Self-hosted control**: Source is public; deploy on your hardware or cloud with **your** Discord application, **your** API keys, and **your** data (Postgres/Redis).
+- **Self-hosted control**: Source is public; deploy on your hardware or cloud with **your** Discord application, **your** API keys, and **your** data (Postgres).
 - **Guided first-time setup**: The first time an operator runs the app, they walk through steps: pick enabled IDEs, configure Discord manually (developer portal, token, invite URL, intents), wire other settings (database, queue, provider keys), then **provision** the server layout.
 - **One Discord server per installation (layout)**: After setup, the bot ensures a **new dedicated server** presents a clean layout: **only** the IDE sections the operator selected exist; anything not selected has **no** category or channels.
 - **Per-IDE areas**: Each enabled IDE gets a **category** (Discord “section”) containing a **`bot-commands`** text channel where members run **`/project create`** to add **project** text channels. Provisioned layout does **not** include a dedicated forum; threads are created **on messages inside each project channel**.
@@ -31,7 +31,7 @@ The operator starts from documented **CLI entrypoint** (example names only): `ag
 3. **Discord (manual)**: Link to Discord Developer Portal. Operator creates an application, a bot user, copies **bot token** and **application (client) id**, enables **required intents** (e.g. message content if you read messages in sessions, guild members if you gate roles), generates an **invite URL** with scopes `applications.commands` and `bot`, and picks **Administrator** or a documented minimal permission set for the bot to manage channels.
 4. **Discord server creation**: Operator creates a **new empty Discord server** in the client (or uses Discord’s documented API path if you later automate guild creation and your app is eligible). They copy the **guild id** into the wizard. The wizard stores it as the **managed guild** for this installation.
 5. **Invite bot**: Operator pastes the invite link, completes OAuth in browser, bot lands in the new guild.
-6. **Other settings**: Database URL, Redis URL, optional object storage, encryption secret for stored tokens, per-provider API keys **only for enabled IDEs**.
+6. **Other settings**: Database URL, optional object storage, encryption secret for stored tokens, per-provider API keys **only for enabled IDEs**.
 7. **Write config**: Emit `.env` or `config.yaml` + run database migrations.
 8. **Provision layout**: One-shot **guild provisioning** job (see §4) creates categories and channels for **enabled IDEs only**.
 9. **Start services**: Operator starts API, worker, and bot (e.g. Docker Compose). Slash commands sync to the guild.
@@ -112,13 +112,13 @@ Re-running provisioning (after enabling a new IDE) should:
 |-------|------------|-----|
 | **API + orchestration** | **Python 3.12+**, **FastAPI** (or Starlette) | Same ecosystem as py-cord; async-friendly; easy `.env` config |
 | **Bot process** | **py-cord** | Application commands, threads, channel/category creation for provisioning |
-| **Queue / workers** | **Redis** + **RQ**, **Arq**, or **Celery** | Long-running IDE jobs; Discord interactions must ack quickly |
+| **Queue / workers** | **RQ**, **Arq**, or **Celery** | Long-running IDE jobs; Discord interactions must ack quickly |
 | **State** | **PostgreSQL** | Installations, enabled providers, sessions, mappings, audit logs |
 | **Secrets** | **Env vars** + optional **libsodium/Fernet** field encryption in DB for BYOK keys | No commercial secret manager required for OSS users |
 | **Artifacts** | Local disk path or **S3-compatible** bucket | Large logs; link from Discord |
 | **Optional compute** | **Docker** per session or shared worker containers | CLI isolation on the same host |
 
-**Typical deployment**: `docker-compose.yml` with services `api`, `worker`, `bot`, `postgres`, `redis`. Document required env vars in one table (bot token, application id, database URL, Redis URL, provider keys for enabled integrations only).
+**Typical deployment**: `docker-compose.yml` with services `api`, `worker`, `bot`, `postgres`. Document required env vars in one table (bot token, application id, database URL, provider keys for enabled integrations only).
 
 The bot may call the API over **localhost** (`HTTP_BASE_URL`) or a Unix socket; same codebase can split processes for scaling later.
 
@@ -175,7 +175,7 @@ Under the hood: HTTP streaming for Anthropic/OpenAI; **bridge runners** for Curs
 | License / distribution | **Open source**; publish **Docker Compose** and env template |
 | Discord SDK | **py-cord** |
 | Core backend | **Python + FastAPI** |
-| Long jobs | **Redis + worker queue** |
+| Long jobs | **Worker queue** |
 | Install + sessions | **PostgreSQL** |
 | First-time UX | **CLI (`setup`) wizard** + manual Discord app + **optional new guild** + **provision layout** |
 | Server provisioned per IDE | **One category**; **`bot-commands`** only; **project** text channels added via **`/project create`**; **threads** created per message in project channels |

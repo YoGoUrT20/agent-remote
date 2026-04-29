@@ -19,7 +19,6 @@ export interface Settings {
   discordApplicationId: string;
   discordGuildId: string;
   databaseUrl: string;
-  redisUrl: string;
   enabledProviders: string;
   anthropicApiKey: string;
   claudeModel: string;
@@ -32,6 +31,8 @@ export interface Settings {
   codexModel: string;
   codexBinaryPath: string;
   codexHomePath: string;
+  opencodeModel: string;
+  opencodeBinaryPath: string;
   encryptionKey: string;
   apiHost: string;
   apiPort: number;
@@ -64,7 +65,6 @@ export function loadSettings(): Settings {
     databaseUrl:
       process.env.DATABASE_URL ??
       "postgresql+asyncpg://agent_remote:agent_remote@localhost:5432/agent_remote",
-    redisUrl: process.env.REDIS_URL ?? "redis://localhost:6379/0",
     enabledProviders,
     anthropicApiKey: process.env.ANTHROPIC_API_KEY ?? "",
     claudeModel: process.env.CLAUDE_MODEL ?? "sonnet",
@@ -78,6 +78,8 @@ export function loadSettings(): Settings {
     codexModel: process.env.CODEX_MODEL ?? "gpt-5.4",
     codexBinaryPath: process.env.CODEX_BINARY_PATH ?? "",
     codexHomePath: process.env.CODEX_HOME ?? "",
+    opencodeModel: process.env.OPENCODE_MODEL ?? "",
+    opencodeBinaryPath: process.env.OPENCODE_BINARY_PATH ?? "",
     encryptionKey: process.env.ENCRYPTION_KEY ?? "",
     apiHost: process.env.API_HOST ?? "0.0.0.0",
     apiPort: Number(process.env.API_PORT ?? "8000") || 8000,
