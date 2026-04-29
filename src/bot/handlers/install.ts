@@ -14,7 +14,6 @@ import {
   BOT_COMMANDS_CHANNEL,
   PROVIDERS,
   resolvedProviderEmojiURL,
-  type ProviderKey,
 } from "../../constants.js";
 import { clearGuild, provisionGuild } from "../../provisioner.js";
 import { providerKeyFromCategory, replyEphemeralEmbed } from "./utils.js";
@@ -108,7 +107,7 @@ export async function handleInstallConfirm(
       );
     try {
       await ch.send({ embeds: [embed] });
-    } catch {}
+    } catch { }
   }
   const cb = client.onInstallComplete;
   if (typeof cb === "function") await Promise.resolve(cb());

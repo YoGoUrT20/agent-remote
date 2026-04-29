@@ -302,9 +302,11 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
     ctx: ClaudeSessionContext,
     message: SDKMessage,
   ): void {
+    const msgAny = message as Record<string, unknown>;
+
     switch (message.type) {
       case "stream_event": {
-        const ev = (message as Record<string, unknown>).event as Record<string, unknown> | undefined;
+        const ev = msgAny.event as Record<string, unknown> | undefined;
         if (!ev) return;
         if (ev.type === "content_block_delta") {
           const delta = ev.delta as Record<string, unknown> | undefined;
@@ -336,17 +338,42 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
         }
         return;
       }
+
       case "result": {
         const resultMsg = message as SDKMessage & { session_id?: string; usage?: Record<string, unknown> };
         if (resultMsg.session_id) {
           ctx.session.resumeCursor = resultMsg.session_id;
         }
         /* Extract usage from result if present */
-        const resultAny = message as Record<string, unknown>;
-        const resultUsage = resultAny.usage as Record<string, unknown> | undefined;
+        const resultUsage = msgAny.usage as Record<string, unknown> | undefined;
         if (resultUsage) {
           if (typeof resultUsage.input_tokens === "number") ctx.inputTokens = resultUsage.input_tokens;
           if (typeof resultUsage.output_tokens === "number") ctx.outputTokens = resultUsage.output_tokens;
+        }
+
+        /* Check if the result is an error (SDKResultError) */
+        const isError = msgAny.is_error === true;
+        const subtype = typeof msgAny.subtype === "string" ? msgAny.subtype : "";
+        const errors = Array.isArray(msgAny.errors) ? (msgAny.errors as string[]) : [];
+
+        if (subtype !== "success" && (isError || subtype.startsWith("error_") || errors.length > 0)) {
+          let errorMsg = "";
+          if (errors.length > 0) {
+            errorMsg = errors.join("\n");
+          } else if (subtype === "error_during_execution") {
+            errorMsg = "An error occurred during execution.";
+          } else if (subtype === "error_max_turns") {
+            errorMsg = "Maximum number of turns reached.";
+          } else if (subtype === "error_max_budget_usd") {
+            errorMsg = "Maximum budget limit reached.";
+          } else {
+            errorMsg = `Claude Code returned an error (${subtype || "unknown"}).`;
+          }
+          console.error(`[claude-adapter] result error: subtype=${subtype} errors=${JSON.stringify(errors)}`);
+          if (!(ctx as any).turnErrorEmitted) {
+            this._offerRuntimeEvent(makeEvent(EventType.ERROR, errorMsg));
+            (ctx as any).turnErrorEmitted = true;
+          }
         }
 
         const doneMeta: Record<string, unknown> = {};
@@ -354,6 +381,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
         if (ctx.outputTokens > 0) doneMeta.outputTokens = ctx.outputTokens;
 
         ctx.currentTurnId = null;
+        (ctx as any).turnErrorEmitted = false;
         ctx.session.status = "ready";
         ctx.session.activeTurnId = undefined;
         ctx.session.updatedAt = new Date().toISOString();
@@ -364,6 +392,89 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
         ctx.outputTokens = 0;
         return;
       }
+
+      /* Rate limit events — surface rejections as errors */
+      case "rate_limit_event": {
+        const info = msgAny.rate_limit_info as Record<string, unknown> | undefined;
+        if (info && info.status === "rejected") {
+          let errorMsg = "⚠️ **Rate limit reached.**";
+          const rateLimitType = info.rateLimitType as string | undefined;
+          const resetsAt = typeof info.resetsAt === "number" ? info.resetsAt : undefined;
+          if (rateLimitType) {
+            const typeLabel = rateLimitType.replace(/_/g, " ");
+            errorMsg += ` Limit type: ${typeLabel}.`;
+          }
+          if (resetsAt) {
+            errorMsg += ` Resets at <t:${resetsAt}:t> (<t:${resetsAt}:R>).`;
+          }
+          console.error(`[claude-adapter] rate limit rejected: ${JSON.stringify(info)}`);
+          if (!(ctx as any).turnErrorEmitted) {
+            this._offerRuntimeEvent(makeEvent(EventType.ERROR, errorMsg));
+            (ctx as any).turnErrorEmitted = true;
+          }
+        } else if (info && info.status === "allowed_warning") {
+          const utilization = typeof info.utilization === "number" ? info.utilization : undefined;
+          if (utilization != null) {
+            console.error(`[claude-adapter] rate limit warning: ${Math.round(utilization * 100)}% utilization`);
+          }
+        }
+        return;
+      }
+
+      /* System messages — surface API retries */
+      case "system": {
+        const subtype = typeof msgAny.subtype === "string" ? msgAny.subtype : "";
+        if (subtype === "api_retry") {
+          const attempt = typeof msgAny.attempt === "number" ? msgAny.attempt : 0;
+          const maxRetries = typeof msgAny.max_retries === "number" ? msgAny.max_retries : 0;
+          const errorType = typeof msgAny.error === "string" ? msgAny.error : "unknown";
+          const errorStatus = typeof msgAny.error_status === "number" ? msgAny.error_status : null;
+          console.error(`[claude-adapter] API retry ${attempt}/${maxRetries} error=${errorType} status=${errorStatus}`);
+
+          /* Surface user-facing errors for rate limits & billing */
+          if (errorType === "rate_limit") {
+            this._offerRuntimeEvent(
+              makeEvent(EventType.TEXT_DELTA, `\n\n⏳ *Rate limited — retrying (${attempt}/${maxRetries})...*\n\n`, { streamKind: "status" }),
+            );
+          } else if (errorType === "billing_error") {
+            this._offerRuntimeEvent(
+              makeEvent(EventType.TEXT_DELTA, `\n\n⚠️ *Billing error — retrying (${attempt}/${maxRetries})...*\n\n`, { streamKind: "status" }),
+            );
+          } else if (errorType === "authentication_failed") {
+            this._offerRuntimeEvent(
+              makeEvent(EventType.TEXT_DELTA, `\n\n🔑 *Authentication failed — retrying (${attempt}/${maxRetries})...*\n\n`, { streamKind: "status" }),
+            );
+          } else if (errorType === "server_error") {
+            this._offerRuntimeEvent(
+              makeEvent(EventType.TEXT_DELTA, `\n\n🔄 *Server error — retrying (${attempt}/${maxRetries})...*\n\n`, { streamKind: "status" }),
+            );
+          }
+        }
+        return;
+      }
+
+      /* Assistant messages — check for error field (rate_limit, billing, etc.) */
+      case "assistant": {
+        const errField = typeof msgAny.error === "string" ? msgAny.error : undefined;
+        if (errField) {
+          const errorLabels: Record<string, string> = {
+            rate_limit: "Rate limit reached",
+            billing_error: "Billing error — check your Anthropic account",
+            authentication_failed: "Authentication failed — check your API key",
+            server_error: "Anthropic server error",
+            invalid_request: "Invalid request",
+            max_output_tokens: "Maximum output tokens reached",
+          };
+          const label = errorLabels[errField] ?? `Error: ${errField}`;
+          console.error(`[claude-adapter] assistant message error: ${errField}`);
+          if (!(ctx as any).turnErrorEmitted) {
+            this._offerRuntimeEvent(makeEvent(EventType.ERROR, label));
+            (ctx as any).turnErrorEmitted = true;
+          }
+        }
+        return;
+      }
+
       default:
         return;
     }

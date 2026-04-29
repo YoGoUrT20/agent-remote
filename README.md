@@ -95,6 +95,4 @@ src/
 - [ ] **`/session` command** — inspect, interrupt, or restart the current agent session from Discord
 - [ ] **Cost tracking** — surface token usage and estimated cost per session in the thread
 - [ ] **Voicemessages support** — allow Discord voice messages as user input.
-
-
-
+- [ ] **Ping/Notify** — A setting which will ping the user once the task is completed.
