@@ -348,42 +348,98 @@ export async function runWizard(): Promise<void> {
   process.once("SIGINT", onSig);
   try {
     await stepWelcome();
-    const enabled = await stepSelectProviders();
-    const { botToken, appId, guildId } = await stepDiscord();
-    client = createClient({
-      onInstallComplete: async () => {
-        if (installSettled) return;
-        installSettled = true;
-        await shutdown();
-        resolveInstall();
-      },
-    });
-    try {
-      await client.login(botToken);
-    } catch (err) {
-      console.error(
-        "Discord login failed. On Bun, REST uses Undici instead of native fetch. If this persists, reset the bot token in the Developer Portal and try again.",
+
+    const envPath = resolve(process.cwd(), ".env");
+    let useExisting = false;
+    if (existsSync(envPath)) {
+      const { reuse } = await prompts<"reuse">(
+        {
+          type: "confirm",
+          name: "reuse",
+          message: "You already have a .env file in this folder. Use it instead of starting fresh?",
+          initial: true,
+        },
+        cancelOpts,
       );
-      console.error(err instanceof Error ? err.message : err);
-      await shutdown();
-      process.exit(1);
+      useExisting = reuse === true;
     }
-    console.log("\nBot starting in background...");
-    const { ownerUserId, restrictToWhitelist } = await stepAccessControl();
-    const { dbUrl, workspaceCwd } = await stepInfrastructure();
-    await stepWriteEnv({
-      botToken,
-      appId,
-      guildId,
-      dbUrl,
-      workspaceCwd,
-      enabled,
-      ownerUserId,
-      restrictToWhitelist,
-    });
-    loadSettings();
+
+    let botToken: string;
+    let appId: string;
+    let guildId: string;
+
+    if (useExisting) {
+      const settings = loadSettings();
+      botToken = settings.discordBotToken;
+      appId = settings.discordApplicationId;
+      guildId = settings.discordGuildId;
+      if (!botToken || !appId || !guildId) {
+        console.log("\n.env is missing Discord credentials. Continuing with full setup.\n");
+        useExisting = false;
+      }
+    }
+
+    if (!useExisting) {
+      const enabled = await stepSelectProviders();
+      ({ botToken, appId, guildId } = await stepDiscord());
+      client = createClient({
+        onInstallComplete: async () => {
+          if (installSettled) return;
+          installSettled = true;
+          await shutdown();
+          resolveInstall();
+        },
+      });
+      try {
+        await client.login(botToken);
+      } catch (err) {
+        console.error(
+          "Discord login failed. On Bun, REST uses Undici instead of native fetch. If this persists, reset the bot token in the Developer Portal and try again.",
+        );
+        console.error(err instanceof Error ? err.message : err);
+        await shutdown();
+        process.exit(1);
+      }
+      console.log("\nBot starting in background...");
+      const { ownerUserId, restrictToWhitelist } = await stepAccessControl();
+      const { dbUrl, workspaceCwd } = await stepInfrastructure();
+      await stepWriteEnv({
+        botToken,
+        appId,
+        guildId,
+        dbUrl,
+        workspaceCwd,
+        enabled,
+        ownerUserId,
+        restrictToWhitelist,
+      });
+      loadSettings();
+    }
+
+    if (!client) {
+      client = createClient({
+        onInstallComplete: async () => {
+          if (installSettled) return;
+          installSettled = true;
+          await shutdown();
+          resolveInstall();
+        },
+      });
+      try {
+        await client.login(botToken!);
+      } catch (err) {
+        console.error(
+          "Discord login failed. On Bun, REST uses Undici instead of native fetch. If this persists, reset the bot token in the Developer Portal and try again.",
+        );
+        console.error(err instanceof Error ? err.message : err);
+        await shutdown();
+        process.exit(1);
+      }
+      console.log("\nBot starting in background...");
+    }
+
     try {
-      await deployGuildCommands(botToken, appId, guildId);
+      await deployGuildCommands(botToken!, appId!, guildId!);
       console.log("Reloaded config and synced slash commands to your server.");
     } catch (exc) {
       console.error(`Could not sync slash commands: ${exc}`);
