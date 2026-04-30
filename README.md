@@ -91,8 +91,9 @@ src/
 - [ ] **Multi-turn tool approval** — interactive buttons to approve/deny tool calls from the agent before execution
 - [ ] **Session history** — persist conversation history so threads survive beyond the in-memory registry
 - [ ] **Per-project config** — allow different model settings, system prompts, or workspace paths per project channel
-- [ ] **Web dashboard** — lightweight UI to monitor active sessions, view logs, and manage providers without Discord
 - [ ] **`/session` command** — inspect, interrupt, or restart the current agent session from Discord
 - [ ] **Cost tracking** — surface token usage and estimated cost per session in the thread
-- [ ] **Voicemessages support** — allow Discord voice messages as user input.
+- [x] **Voice messages support** — Discord voice messages are transcribed locally with Whisper (auto-detects english for now.). Bot posts the transcription in-thread before forwarding it to the agent so you can verify what was heard.
 - [ ] **Ping/Notify** — A setting which will ping the user once the task is completed.
+- [ ] **Bot look and feel** — Automatically assgin the bot name and avatar.
+

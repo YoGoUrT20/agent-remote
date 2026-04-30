@@ -7,10 +7,17 @@ import {
   type ThreadChannel,
 } from "discord.js";
 import type { BaseAdapter } from "../../adapters/base.js";
-import { loadSettings } from "../../config.js";
+import { loadSettings, type Settings } from "../../config.js";
 import { isUserAllowed } from "../../access-store.js";
 import { runSerial } from "../serial-queue.js";
 import { buildChatAdapter } from "../../adapters/factory.js";
+import {
+  isVoiceMessage,
+  pickVoiceAttachment,
+  transcribeVoiceAttachment,
+  type VoiceTranscription,
+} from "../../voice/index.js";
+import type { WhisperDType } from "../../voice/transcribe.js";
 import {
   BOT_COMMANDS_CHANNEL,
   PROVIDERS,
@@ -183,6 +190,66 @@ async function streamAssistantRepliesEmbed(
   }
 }
 
+/* ── Voice transcription helpers ── */
+
+function formatVoiceDuration(seconds: number): string {
+  if (seconds >= 60) return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+  return `${seconds.toFixed(1)}s`;
+}
+
+function voiceTranscriptionEmbed(voice: VoiceTranscription, modelId: string): EmbedBuilder {
+  const trimmed = voice.text.trim();
+  const description = trimmed
+    ? "> " + trimmed.replace(/\n/g, "\n> ")
+    : "_(no speech detected)_";
+  const modelShort = modelId.split("/").pop() ?? modelId;
+  return new EmbedBuilder()
+    .setColor(0x5865f2)
+    .setAuthor({ name: `🎙️ Voice message · ${formatVoiceDuration(voice.durationSeconds)}` })
+    .setDescription(description.length > MAX_EMBED_DESC ? `${description.slice(0, MAX_EMBED_DESC)}…` : description)
+    .setFooter({ text: `Transcribed locally with ${modelShort}` });
+}
+
+interface ResolvedInput {
+  text: string;
+  voice: VoiceTranscription | null;
+  voiceModelId: string;
+}
+
+/** Resolve a message's effective input text, transcribing voice attachments
+    if present. Returns null if the message can't produce any input. */
+async function resolveInput(message: import("discord.js").Message, settings: Settings): Promise<ResolvedInput | null> {
+  const rawText = (message.content ?? "").trim();
+  if (!settings.voiceEnabled || !isVoiceMessage(message)) {
+    return rawText ? { text: rawText, voice: null, voiceModelId: settings.voiceWhisperModel } : null;
+  }
+  const att = pickVoiceAttachment(message);
+  if (!att) return rawText ? { text: rawText, voice: null, voiceModelId: settings.voiceWhisperModel } : null;
+  try { await message.react("🎙️"); } catch {}
+  try {
+    const voice = await transcribeVoiceAttachment(att, {
+      modelId: settings.voiceWhisperModel,
+      dtype: settings.voiceWhisperDtype as WhisperDType,
+      language: settings.voiceLanguage,
+    });
+    const text = voice.text.trim() || rawText;
+    if (!text) return { text: "", voice, voiceModelId: settings.voiceWhisperModel };
+    return { text, voice, voiceModelId: settings.voiceWhisperModel };
+  } catch (e) {
+    console.error("voice transcription failed:", e);
+    const errEmbed = new EmbedBuilder()
+      .setColor(0xed4245)
+      .setTitle("Voice transcription failed")
+      .setDescription(e instanceof Error ? e.message : String(e));
+    try {
+      if (message.channel.isTextBased() && "send" in message.channel) {
+        await (message.channel as { send: (o: { embeds: EmbedBuilder[] }) => Promise<unknown> }).send({ embeds: [errEmbed] });
+      }
+    } catch {}
+    return null;
+  }
+}
+
 /* ── Register MessageCreate handler ── */
 
 export function registerMessageHandler(client: Client): void {
@@ -218,8 +285,15 @@ export function registerMessageHandler(client: Client): void {
       const cat = categoryFromProjectParent(parent);
       const pk = providerKeyFromCategory(client, cat);
       if (!pk) return;
-      const text = (message.content ?? "").trim();
-      if (!text) return;
+      const settingsForInput = loadSettings();
+      const resolved = await resolveInput(message, settingsForInput);
+      if (!resolved || !resolved.text) return;
+      const text = resolved.text;
+      if (resolved.voice) {
+        try {
+          await threadCh.send({ embeds: [voiceTranscriptionEmbed(resolved.voice, resolved.voiceModelId)] });
+        } catch {}
+      }
       let sess = client.chatRegistry.get(threadCh.id);
 
       /* Restore persisted model override if not already set in-memory */
@@ -328,8 +402,9 @@ export function registerMessageHandler(client: Client): void {
     if (!enabledList.length) enabledList = ["claude"];
     if (!enabledList.includes(pk)) return;
     if (!client.projectStore.has(message.channel.id)) return;
-    const text = (message.content ?? "").trim();
-    if (!text) return;
+    const resolved = await resolveInput(message, settings);
+    if (!resolved || !resolved.text) return;
+    const text = resolved.text;
 
     /* Skip if this message already has a thread (duplicate event / race) */
     if (message.hasThread) return;
@@ -344,6 +419,11 @@ export function registerMessageHandler(client: Client): void {
       });
     } catch {
       return;
+    }
+    if (resolved.voice) {
+      try {
+        await thread.send({ embeds: [voiceTranscriptionEmbed(resolved.voice, resolved.voiceModelId)] });
+      } catch {}
     }
 
     let adapter: BaseAdapter | null = null;

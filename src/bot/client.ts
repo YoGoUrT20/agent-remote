@@ -79,6 +79,24 @@ export function createClient(options: CreateClientOptions = {}): Client {
         await syncProviderEmoji(guild);
       } catch {}
     }
+
+    /* Optional: pre-download/load the Whisper model so the first voice
+       message doesn't pay the load cost. */
+    if (settings.voiceEnabled && settings.voiceWarmup) {
+      void (async () => {
+        try {
+          const { warmupWhisper } = await import("../voice/index.js");
+          await warmupWhisper({
+            modelId: settings.voiceWhisperModel,
+            dtype: settings.voiceWhisperDtype as never,
+            language: settings.voiceLanguage,
+          });
+          logOut(`Whisper model warmed up: ${settings.voiceWhisperModel}`);
+        } catch (e) {
+          logErr(`Whisper warmup failed: ${String(e)}`);
+        }
+      })();
+    }
   });
   client.on(Events.ShardError, (err) => {
     logErr(`Discord shard error: ${String(err)}`);

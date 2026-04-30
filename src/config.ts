@@ -37,6 +37,11 @@ export interface Settings {
   apiHost: string;
   apiPort: number;
   accessEnvDefaults: AccessEnvDefaults;
+  voiceEnabled: boolean;
+  voiceWhisperModel: string;
+  voiceWhisperDtype: string;
+  voiceLanguage: string | null;
+  voiceWarmup: boolean;
   enabledProviderKeys(): string[];
 }
 
@@ -88,6 +93,11 @@ export function loadSettings(): Settings {
       allowedUserIds: parseCsvIds(process.env.BOT_ALLOWED_USER_IDS),
       restrictToWhitelist: parseBoolEnv(process.env.BOT_RESTRICT_TO_WHITELIST, true),
     },
+    voiceEnabled: parseBoolEnv(process.env.VOICE_ENABLED, true),
+    voiceWhisperModel: process.env.VOICE_WHISPER_MODEL ?? "onnx-community/whisper-base",
+    voiceWhisperDtype: process.env.VOICE_WHISPER_DTYPE ?? "q8",
+    voiceLanguage: process.env.VOICE_LANGUAGE?.trim() || null,
+    voiceWarmup: parseBoolEnv(process.env.VOICE_WARMUP, false),
     enabledProviderKeys() {
       if (!enabledProviders) return [];
       return enabledProviders.split(",").map((k) => k.trim()).filter(Boolean);
