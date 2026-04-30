@@ -82,18 +82,22 @@ src/
 
 ## Roadmap
 
+### Done
+- [x] **Attachments & images** — forward Discord file uploads to agent sessions as context
+- [x] **Voice messages support** — Discord voice messages are transcribed locally with Whisper (auto-detects english for now.). Bot posts the transcription in-thread before forwarding it to the agent so you can verify what was heard.
+
 ### In progress
 - [ ] **Cursor adapter** — bridge integration for Cursor agent sessions
 - [ ] **Antigravity adapter** — vendor-specific bridge for Antigravity
 
 ### Planned
-- [ ] **Attachments & images** — forward Discord file uploads to agent sessions as context
 - [ ] **Multi-turn tool approval** — interactive buttons to approve/deny tool calls from the agent before execution
+- [ ] **Tool display** — display all tool calls model is doing in discord.
 - [ ] **Session history** — persist conversation history so threads survive beyond the in-memory registry
 - [ ] **Per-project config** — allow different model settings, system prompts, or workspace paths per project channel
 - [ ] **`/session` command** — inspect, interrupt, or restart the current agent session from Discord
 - [ ] **Cost tracking** — surface token usage and estimated cost per session in the thread
-- [x] **Voice messages support** — Discord voice messages are transcribed locally with Whisper (auto-detects english for now.). Bot posts the transcription in-thread before forwarding it to the agent so you can verify what was heard.
 - [ ] **Ping/Notify** — A setting which will ping the user once the task is completed.
 - [ ] **Bot look and feel** — Automatically assgin the bot name and avatar.
+- [ ] **Limit handler** — Add a setting to send the message when rate limit is over.
 

@@ -62,10 +62,12 @@ export const SETTINGS_DETECT_OWNER = "ar_settings_detect_owner";
 
 export const SETTINGS_TAB_ACCESS = "ar_settings_tab_access";
 export const SETTINGS_TAB_MODELS = "ar_settings_tab_models";
+export const SETTINGS_TAB_GENERAL = "ar_settings_tab_general";
 export const SETTINGS_MODEL_SELECT = "ar_settings_model_select:";
 export const SETTINGS_MODEL_RESET = "ar_settings_model_reset:";
+export const SETTINGS_TOGGLE_PING = "ar_settings_toggle_ping";
 
-export type SettingsTab = "access" | "models";
+export type SettingsTab = "access" | "models" | "general";
 
 export const MAX_WHITELIST_REMOVE_OPTIONS = 25;
 export const SETTINGS_PANEL_ACCENT = 0x5865f2;
@@ -92,11 +94,30 @@ export function persistSessionId(client: Client, threadId: string, adapter: Base
   }
 }
 
+const SLUG_LABEL_MAP: Record<string, string> = {
+  "claude-opus-4": "Claude Opus 4",
+  "claude-sonnet-4": "Claude Sonnet 4",
+  "claude-haiku-4": "Claude Haiku 4",
+};
+
+function labelFromSlug(slug: string): string | null {
+  const base = slug.replace(/-\d{8}$/, "");
+  for (const [prefix, label] of Object.entries(SLUG_LABEL_MAP)) {
+    if (base.startsWith(prefix)) {
+      const suffix = base.slice(prefix.length);
+      const version = suffix.startsWith("-") ? suffix.slice(1) : "";
+      return version ? `${label}.${version}` : label;
+    }
+  }
+  return null;
+}
+
 export function resolveModelLabel(pk: ProviderKey, modelValue: string | null | undefined): string {
   if (!modelValue) return "";
   const models = PROVIDER_MODELS[pk] ?? [];
   const def = models.find((m) => m.value === modelValue);
-  return def ? def.label : modelValue;
+  if (def) return def.label;
+  return labelFromSlug(modelValue) ?? modelValue;
 }
 
 export function currentAccess(client: Client): EffectiveAccess {
@@ -283,6 +304,12 @@ export function buildHeaderComponents(activeTab: SettingsTab): Array<TextDisplay
       .setEmoji("🧠")
       .setStyle(activeTab === "models" ? ButtonStyle.Primary : ButtonStyle.Secondary)
       .setDisabled(activeTab === "models"),
+    new ButtonBuilder()
+      .setCustomId(SETTINGS_TAB_GENERAL)
+      .setLabel("General")
+      .setEmoji("⚙️")
+      .setStyle(activeTab === "general" ? ButtonStyle.Primary : ButtonStyle.Secondary)
+      .setDisabled(activeTab === "general"),
   );
   const sep = new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small);
   return [tabs, sep];

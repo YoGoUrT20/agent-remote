@@ -254,9 +254,27 @@ export class CodexCliAdapter extends BaseAdapter {
     }
 
     try {
+      const turnInput: Array<Record<string, unknown>> = [];
+
+      if (input.attachments?.length) {
+        for (const att of input.attachments) {
+          if (att.type === "image") {
+            turnInput.push({
+              type: "image",
+              url: `data:${att.mimeType};base64,${att.data}`,
+            });
+          } else if (att.type === "text") {
+            const label = att.fileName ? `[File: ${att.fileName}]` : "[Attached file]";
+            turnInput.push({ type: "text", text: `${label}\n\`\`\`\n${att.data}\n\`\`\``, text_elements: [] });
+          }
+        }
+      }
+
+      turnInput.push({ type: "text", text: input.input ?? "", text_elements: [] });
+
       const turnResponse = await this._sendRequest<Record<string, unknown>>(ctx, "turn/start", {
         threadId: ctx.providerThreadId,
-        input: [{ type: "text", text: input.input ?? "", text_elements: [] }],
+        input: turnInput,
       });
 
       /* Extract provider turn ID if available */

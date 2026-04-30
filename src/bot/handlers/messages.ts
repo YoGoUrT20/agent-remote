@@ -17,6 +17,7 @@ import {
   transcribeVoiceAttachment,
   type VoiceTranscription,
 } from "../../voice/index.js";
+import { downloadAllAttachments } from "../../attachments.js";
 import type { WhisperDType } from "../../voice/transcribe.js";
 import {
   BOT_COMMANDS_CHANNEL,
@@ -41,9 +42,9 @@ import {
 async function streamAssistantRepliesEmbed(
   thread: ThreadChannel,
   adapter: BaseAdapter,
-  options: { fallbackThreadTitle: string; providerKey: ProviderKey; skipRename?: boolean; modelLabel?: string },
+  options: { fallbackThreadTitle: string; providerKey: ProviderKey; skipRename?: boolean; modelLabel?: string; pingUserId?: string },
 ): Promise<void> {
-  const { fallbackThreadTitle, providerKey, skipRename = false, modelLabel } = options;
+  const { fallbackThreadTitle, providerKey, skipRename = false, modelLabel, pingUserId } = options;
   let reasoning = "";
   let response = "";
   let lastEdit = 0;
@@ -164,6 +165,14 @@ async function streamAssistantRepliesEmbed(
             embeds: [buildEmbed(body || "Done.", 0x57f287, stats)],
           });
         } catch {
+        }
+        if (pingUserId) {
+          try {
+            await thread.send({
+              content: `<@${pingUserId}>`,
+              allowedMentions: { users: [pingUserId] },
+            });
+          } catch {}
         }
       }
       break; // Turn complete — return so the next turn can create a new embed
@@ -350,16 +359,20 @@ export function registerMessageHandler(client: Client): void {
       }
 
       const session = sess;
+      const downloaded = await downloadAllAttachments(message);
+      const attachments = downloaded.map((a) => ({ type: a.type, mimeType: a.mimeType, data: a.data, fileName: a.fileName }));
+      const pingEnabled = access.pingOnResponse;
       await runSerial(threadCh.id, async () => {
         try {
           await threadCh.sendTyping();
-          await session.adapter.sendTurn({ threadId: threadCh.id, input: text });
+          await session.adapter.sendTurn({ threadId: threadCh.id, input: text, attachments });
           const activeModel = session.adapter.getSessionModel(threadCh.id) ?? client.modelOverrides.get(threadCh.id);
           await streamAssistantRepliesEmbed(threadCh, session.adapter, {
             fallbackThreadTitle: threadCh.name,
             providerKey: pk,
             skipRename: true,
             modelLabel: resolveModelLabel(pk, activeModel),
+            pingUserId: pingEnabled ? message.author.id : undefined,
           });
           persistSessionId(client, threadCh.id, session.adapter, pk);
         } catch (e) {
@@ -426,6 +439,8 @@ export function registerMessageHandler(client: Client): void {
       } catch {}
     }
 
+    const newThreadAttachments = await downloadAllAttachments(message);
+    const newThreadAttachmentPayload = newThreadAttachments.map((a) => ({ type: a.type, mimeType: a.mimeType, data: a.data, fileName: a.fileName }));
     let adapter: BaseAdapter | null = null;
     try {
       adapter = buildChatAdapter(pk, settings);
@@ -435,18 +450,20 @@ export function registerMessageHandler(client: Client): void {
         client.modelOverrides.get(message.channel.id) ??
         client.modelStore.getDefaultModel(pk);
       await adapter.startSession({ threadId: thread.id, cwd: cwdOpt, model: channelModelOverride });
-      await adapter.sendTurn({ threadId: thread.id, input: text });
+      await adapter.sendTurn({ threadId: thread.id, input: text, attachments: newThreadAttachmentPayload });
       const session = { providerKey: pk, adapter };
       client.chatRegistry.add(thread.id, session);
       /* Propagate channel-level model override to the thread so subsequent /model checks work */
       if (channelModelOverride) client.modelOverrides.set(thread.id, channelModelOverride);
       adapter = null;
+      const pingEnabledNewThread = access.pingOnResponse;
       await runSerial(thread.id, async () => {
         const newSessionModel = session.adapter.getSessionModel(thread.id) ?? channelModelOverride;
         await streamAssistantRepliesEmbed(thread, session.adapter, {
           fallbackThreadTitle: text,
           providerKey: pk,
           modelLabel: resolveModelLabel(pk, newSessionModel),
+          pingUserId: pingEnabledNewThread ? message.author.id : undefined,
         });
         persistSessionId(client, thread.id, session.adapter, pk);
       });

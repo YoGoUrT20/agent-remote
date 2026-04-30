@@ -27,7 +27,9 @@ import {
   SETTINGS_REMOVE_OWNER,
   SETTINGS_SET_OWNER,
   SETTINGS_TAB_ACCESS,
+  SETTINGS_TAB_GENERAL,
   SETTINGS_TAB_MODELS,
+  SETTINGS_TOGGLE_PING,
   SETTINGS_TOGGLE_RESTRICT,
 } from "./utils.js";
 import {
@@ -35,6 +37,7 @@ import {
   handleSettingsUserSelect,
   handleSettingsRemoveAllowed,
   handleSettingsButtons,
+  handleSettingsGeneralButtons,
   handleSettingsTabNavigation,
   handleSettingsModelReset,
   handleSettingsModelSelect,
@@ -116,9 +119,17 @@ export function registerHandlers(client: Client): void {
       /* ── Settings tab navigation ── */
       if (
         interaction.isButton() &&
-        (interaction.customId === SETTINGS_TAB_ACCESS || interaction.customId === SETTINGS_TAB_MODELS)
+        (interaction.customId === SETTINGS_TAB_ACCESS ||
+          interaction.customId === SETTINGS_TAB_MODELS ||
+          interaction.customId === SETTINGS_TAB_GENERAL)
       ) {
         await handleSettingsTabNavigation(client, interaction);
+        return;
+      }
+
+      /* ── Settings general buttons ── */
+      if (interaction.isButton() && interaction.customId === SETTINGS_TOGGLE_PING) {
+        await handleSettingsGeneralButtons(client, interaction);
         return;
       }
 

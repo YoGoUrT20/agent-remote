@@ -8,6 +8,11 @@ import {
   type SDKMessage,
   type SDKUserMessage,
 } from "@anthropic-ai/claude-agent-sdk";
+import type {
+  ContentBlockParam,
+  ImageBlockParam,
+  TextBlockParam,
+} from "@anthropic-ai/sdk/resources/messages/messages";
 import {
   BaseAdapter,
   EventType,
@@ -327,9 +332,12 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
             if (outputTokens > 0) ctx.outputTokens = outputTokens;
           }
         }
-        /* Capture token usage from message_start events */
+        /* Capture model and token usage from message_start events */
         if (ev.type === "message_start") {
           const msg = ev.message as Record<string, unknown> | undefined;
+          if (msg && typeof msg.model === "string") {
+            ctx.session.model = msg.model;
+          }
           const usage = msg?.usage as Record<string, unknown> | undefined;
           if (usage) {
             const inputTokens = typeof usage.input_tokens === "number" ? usage.input_tokens : 0;
@@ -511,6 +519,29 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
 
     const text = input.input ?? "";
 
+    /* Build content blocks — text + any attachments */
+    const content: ContentBlockParam[] = [];
+
+    if (input.attachments?.length) {
+      for (const att of input.attachments) {
+        if (att.type === "image") {
+          content.push({
+            type: "image",
+            source: {
+              type: "base64",
+              media_type: att.mimeType as "image/jpeg" | "image/png" | "image/gif" | "image/webp",
+              data: att.data,
+            },
+          } satisfies ImageBlockParam);
+        } else if (att.type === "text") {
+          const label = att.fileName ? `[File: ${att.fileName}]` : "[Attached file]";
+          content.push({ type: "text", text: `${label}\n\`\`\`\n${att.data}\n\`\`\`` } satisfies TextBlockParam);
+        }
+      }
+    }
+
+    content.push({ type: "text", text } satisfies TextBlockParam);
+
     /* Build user message */
     const userMessage: SDKUserMessage = {
       type: "user",
@@ -518,7 +549,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
       parent_tool_use_id: null,
       message: {
         role: "user",
-        content: [{ type: "text", text }],
+        content,
       },
     };
 

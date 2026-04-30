@@ -44,7 +44,9 @@ import {
   SETTINGS_REMOVE_OWNER,
   SETTINGS_SET_OWNER,
   SETTINGS_TAB_ACCESS,
+  SETTINGS_TAB_GENERAL,
   SETTINGS_TAB_MODELS,
+  SETTINGS_TOGGLE_PING,
   SETTINGS_TOGGLE_RESTRICT,
   type SettingsTab,
 } from "./utils.js";
@@ -295,6 +297,43 @@ function buildModelsPanel(
   return { components };
 }
 
+/* ── General tab ── */
+
+function buildGeneralPanel(
+  client: Client,
+  access: EffectiveAccess,
+): { components: (TextDisplayBuilder | ActionRowBuilder<ButtonBuilder> | SeparatorBuilder | ContainerBuilder)[] } {
+  const pingText = access.pingOnResponse
+    ? `### 🔔 Ping on Response\n**On** — the bot will mention the user when the model finishes answering.`
+    : `### 🔕 Ping on Response\n**Off** — no mention is sent when the model finishes answering.`;
+
+  const intro = new TextDisplayBuilder().setContent(
+    "General bot behavior settings.",
+  );
+
+  const pingSection = new SectionBuilder()
+    .addTextDisplayComponents(new TextDisplayBuilder().setContent(pingText))
+    .setButtonAccessory(
+      new ButtonBuilder()
+        .setCustomId(SETTINGS_TOGGLE_PING)
+        .setLabel(access.pingOnResponse ? "Disable" : "Enable")
+        .setStyle(access.pingOnResponse ? ButtonStyle.Secondary : ButtonStyle.Primary),
+    );
+
+  const sep = (): SeparatorBuilder =>
+    new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small);
+
+  const mainContainer = new ContainerBuilder()
+    .setAccentColor(SETTINGS_PANEL_ACCENT)
+    .addTextDisplayComponents(intro)
+    .addSeparatorComponents(sep())
+    .addSectionComponents(pingSection);
+
+  return {
+    components: [...buildHeaderComponents("general"), mainContainer],
+  };
+}
+
 /* ── Build settings panel (dispatches to active tab) ── */
 
 type SettingsPanelPayload = InteractionEditReplyOptions;
@@ -304,7 +343,12 @@ export async function buildSettingsPanel(
   access: EffectiveAccess,
   tab: SettingsTab = "access",
 ): Promise<SettingsPanelPayload> {
-  const built = tab === "models" ? buildModelsPanel(client) : await buildAccessPanel(client, access);
+  const built =
+    tab === "models"
+      ? buildModelsPanel(client)
+      : tab === "general"
+        ? buildGeneralPanel(client, access)
+        : await buildAccessPanel(client, access);
   return {
     flags: MessageFlags.IsComponentsV2,
     components: built.components as InteractionEditReplyOptions["components"],
@@ -418,6 +462,22 @@ export async function handleSettingsButtons(
   await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction, "access");
 }
 
+export async function handleSettingsGeneralButtons(
+  client: Client,
+  interaction: import("discord.js").ButtonInteraction,
+): Promise<void> {
+  await interaction.deferUpdate();
+  const access = currentAccess(client);
+  if (!isSettingsAuthorized(interaction, access)) {
+    await replyNotSettingsAuthorized(interaction, access);
+    return;
+  }
+  if (interaction.customId === SETTINGS_TOGGLE_PING) {
+    client.accessStore.setPingOnResponse(!access.pingOnResponse);
+  }
+  await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction, "general");
+}
+
 export async function handleSettingsTabNavigation(
   client: Client,
   interaction: import("discord.js").ButtonInteraction,
@@ -428,7 +488,12 @@ export async function handleSettingsTabNavigation(
     await replyNotSettingsAuthorized(interaction, access);
     return;
   }
-  const tab: SettingsTab = interaction.customId === SETTINGS_TAB_MODELS ? "models" : "access";
+  const tab: SettingsTab =
+    interaction.customId === SETTINGS_TAB_MODELS
+      ? "models"
+      : interaction.customId === SETTINGS_TAB_GENERAL
+        ? "general"
+        : "access";
   await rebuildSettingsPanel(client, interaction as unknown as RepliableInteraction, tab);
 }
 

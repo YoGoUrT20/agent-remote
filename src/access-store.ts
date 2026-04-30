@@ -5,6 +5,7 @@ export interface AccessOverrides {
   ownerUserId?: string;
   allowedUserIds?: string[];
   restrictToWhitelist?: boolean;
+  pingOnResponse?: boolean;
 }
 
 /**
@@ -70,6 +71,12 @@ export class AccessStore {
     this._save();
   }
 
+  setPingOnResponse(on: boolean | null): void {
+    if (on === null) delete this._data.pingOnResponse;
+    else this._data.pingOnResponse = on;
+    this._save();
+  }
+
   private _load(): void {
     try {
       const raw = readFileSync(this._path, "utf-8");
@@ -81,6 +88,8 @@ export class AccessStore {
           : undefined,
         restrictToWhitelist:
           typeof parsed.restrictToWhitelist === "boolean" ? parsed.restrictToWhitelist : undefined,
+        pingOnResponse:
+          typeof parsed.pingOnResponse === "boolean" ? parsed.pingOnResponse : undefined,
       };
     } catch {
       this._data = {};
@@ -109,6 +118,7 @@ export interface EffectiveAccess {
   ownerUserId: string;
   allowedUserIds: string[];
   restrictToWhitelist: boolean;
+  pingOnResponse: boolean;
 }
 
 export interface AccessEnvDefaults {
@@ -135,10 +145,12 @@ export function effectiveAccess(
     overrides.restrictToWhitelist !== undefined
       ? overrides.restrictToWhitelist
       : env.restrictToWhitelist;
+  const pingOnResponse = overrides.pingOnResponse ?? false;
   return {
     ownerUserId,
     allowedUserIds: [...dedup],
     restrictToWhitelist,
+    pingOnResponse,
   };
 }
 

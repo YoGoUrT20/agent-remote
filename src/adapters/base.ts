@@ -38,7 +38,7 @@ export interface ProviderSession {
 export interface ProviderSendTurnInput {
   threadId: string;
   input?: string;
-  attachments?: Array<{ type: string; mimeType: string; data: string }>;
+  attachments?: Array<{ type: string; mimeType: string; data: string; fileName?: string }>;
 }
 
 export interface ProviderTurnStartResult {

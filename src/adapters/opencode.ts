@@ -203,9 +203,25 @@ export class OpenCodeCliAdapter extends BaseAdapter {
     });
     ctx.child = child;
 
+    /* Build the full input: attachment context + user message */
+    let fullInput = "";
+    if (input.attachments?.length) {
+      const parts: string[] = [];
+      for (const att of input.attachments) {
+        const label = att.fileName ? `[File: ${att.fileName}]` : "[Attached file]";
+        if (att.type === "image") {
+          parts.push(`${label}\n(image: ${att.mimeType}, base64-encoded, ${att.data.length} chars — visual content attached via Discord)`);
+        } else if (att.type === "text") {
+          parts.push(`${label}\n\`\`\`\n${att.data}\n\`\`\``);
+        }
+      }
+      fullInput = parts.join("\n\n") + "\n\n";
+    }
+    fullInput += input.input ?? "";
+
     /* Write the user's message via stdin and close it. */
     try {
-      child.stdin.write(input.input ?? "");
+      child.stdin.write(fullInput);
       child.stdin.end();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
