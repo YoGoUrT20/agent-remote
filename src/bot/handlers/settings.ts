@@ -352,7 +352,6 @@ export async function buildSettingsPanel(
   return {
     flags: MessageFlags.IsComponentsV2,
     components: built.components as InteractionEditReplyOptions["components"],
-    embeds: [],
     content: "",
   };
 }

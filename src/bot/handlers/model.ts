@@ -103,10 +103,9 @@ export async function handleModelCommand(
             `### ${heading}\n${currentLabel}\n\n_No predefined models for this provider. Use \`/model name:<model>\` to set one manually._`
           )
         );
-      await interaction.editReply({ 
+      await interaction.editReply({
         flags: MessageFlags.IsComponentsV2,
         components: [container as any],
-        embeds: [],
         content: ""
       });
       return;
@@ -142,7 +141,6 @@ export async function handleModelCommand(
     await interaction.editReply({
       flags: MessageFlags.IsComponentsV2,
       components: [container as any],
-      embeds: [],
       content: ""
     });
     return;

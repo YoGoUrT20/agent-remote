@@ -423,7 +423,11 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
         } else if (info && info.status === "allowed_warning") {
           const utilization = typeof info.utilization === "number" ? info.utilization : undefined;
           if (utilization != null) {
-            console.error(`[claude-adapter] rate limit warning: ${Math.round(utilization * 100)}% utilization`);
+            const pct = Math.round(utilization * 100);
+            console.error(`[claude-adapter] rate limit warning: ${pct}% utilization`);
+            this._offerRuntimeEvent(
+              makeEvent(EventType.TEXT_DELTA, `\n\n> ⚠️ *Rate limit warning: ${pct}% utilization*\n\n`, { streamKind: "status" }),
+            );
           }
         }
         return;
