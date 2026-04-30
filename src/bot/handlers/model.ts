@@ -211,7 +211,6 @@ export async function handleModelSelectMenu(
   }
   const models = pk ? (PROVIDER_MODELS[pk] ?? []) : [];
   const modelDef = models.find((m) => m.value === picked);
-  const label = modelDef?.label ?? picked;
 
   const targetId = isThread ? ch!.id : ch?.id ?? null;
   if (!targetId) {
@@ -244,11 +243,44 @@ export async function handleModelSelectMenu(
   }
 
   const contextHint = isThread
-    ? "Takes effect on your next message."
+    ? "Takes effect on your next message in this thread."
     : "Will apply to the next new session you start in this channel.";
-  const embed = new EmbedBuilder()
-    .setTitle("Model updated")
-    .setDescription(`Switched to **${label}** (\`${picked}\`). ${contextHint}`)
-    .setColor(0x57f287);
-  await interaction.editReply({ embeds: [embed], components: [] });
+
+  const currentLabel = modelDef ? `**${modelDef.label}**  ·  \`${picked}\`` : `\`${picked}\``;
+  const providerName = pk ? (PROVIDERS[pk]?.displayName ?? pk) : "Unknown";
+  const emoji = pk ? resolvedProviderEmoji[pk as ProviderKey] : null;
+  const heading = emoji ? `${emoji} **${providerName}**` : `**${providerName}**`;
+  const headerText = `### ${heading}\n${currentLabel}\n-# Source: channel/thread override`;
+
+  const menu = new StringSelectMenuBuilder()
+    .setCustomId(MODEL_SELECT_ID)
+    .setPlaceholder("Select a model…")
+    .addOptions(
+      models.map((m) => ({
+        label: m.label.slice(0, 100),
+        value: m.value,
+        description: m.value.slice(0, 100),
+        default: m.value === picked,
+      })),
+    );
+
+  const container = new ContainerBuilder()
+    .setAccentColor(SETTINGS_PANEL_ACCENT)
+    .addTextDisplayComponents(
+      new TextDisplayBuilder().setContent(headerText),
+      new TextDisplayBuilder().setContent(`Select a different model below.\n-# ${contextHint}`)
+    )
+    .addSeparatorComponents(
+      new SeparatorBuilder().setDivider(true).setSpacing(SeparatorSpacingSize.Small)
+    )
+    .addActionRowComponents(
+      new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(menu)
+    );
+
+  await interaction.editReply({
+    flags: MessageFlags.IsComponentsV2,
+    components: [container as any],
+    embeds: [],
+    content: ""
+  });
 }

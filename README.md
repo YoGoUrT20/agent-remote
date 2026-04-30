@@ -100,4 +100,6 @@ src/
 - [ ] **Ping/Notify** — A setting which will ping the user once the task is completed.
 - [ ] **Bot look and feel** — Automatically assgin the bot name and avatar.
 - [ ] **Limit handler** — Add a setting to send the message when rate limit is over.
+- [ ] **Work Preview** — Ability to review/debug the app model created from any device by hosting it online (working prototype for web apps) 
+- [ ] **Message editing** — Handle the message edit hook, by continuing the conversation from the newly edited message. 
 
