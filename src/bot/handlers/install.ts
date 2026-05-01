@@ -2,7 +2,6 @@ import {
   ActionRowBuilder,
   ButtonBuilder,
   ButtonStyle,
-  ChannelType,
   Client,
   EmbedBuilder,
   MessageFlags,
@@ -13,10 +12,10 @@ import { loadSettings } from "../../config.js";
 import {
   BOT_COMMANDS_CHANNEL,
   PROVIDERS,
-  resolvedProviderEmojiURL,
 } from "../../constants.js";
 import { clearGuild, provisionGuild } from "../../provisioner.js";
-import { providerKeyFromCategory, replyEphemeralEmbed } from "./utils.js";
+import { replyEphemeralEmbed } from "./utils.js";
+import { updateChatList } from "../chat-list.js";
 
 /* ── /install command handler ── */
 
@@ -88,27 +87,8 @@ export async function handleInstallConfirm(
       flags: MessageFlags.Ephemeral,
     });
   }
-  // Send a per-provider welcome embed to each bot-commands channel
-  await guild.channels.fetch();
-  for (const ch of guild.channels.cache.values()) {
-    if (ch.type !== ChannelType.GuildText || ch.name !== BOT_COMMANDS_CHANNEL) continue;
-    const cat = ch.parent;
-    if (!cat || cat.type !== ChannelType.GuildCategory) continue;
-    const pk = providerKeyFromCategory(client, cat);
-    if (!pk) continue;
-    const provider = PROVIDERS[pk];
-    const iconURL = resolvedProviderEmojiURL[pk];
-    const embed = new EmbedBuilder()
-      .setColor(0x5865f2)
-      .setAuthor({ name: provider.displayName, ...(iconURL ? { iconURL } : {}) })
-      .setDescription(
-        `This is the **${provider.displayName}** command channel.\n\n` +
-        `Start the bot with \`\`\`bun run bot\`\`\`\nThen open a project using \`/project open <project name>\`.`,
-      );
-    try {
-      await ch.send({ embeds: [embed] });
-    } catch { }
-  }
+  // Post the chat list embed to each bot-commands channel
+  await updateChatList(client, guild.id);
   const cb = client.onInstallComplete;
   if (typeof cb === "function") await Promise.resolve(cb());
 }

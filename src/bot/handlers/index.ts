@@ -52,6 +52,8 @@ import { handleModelCommand, handleModelSelectMenu } from "./model.js";
 import { handleInstallCommand, handleInstallConfirm, handleInstallCancel } from "./install.js";
 import { handleProjectOpenAutocomplete, handleModelAutocomplete } from "./autocomplete.js";
 import { registerMessageHandler } from "./messages.js";
+import { handleChatlistPick, handleChatlistModal } from "./chatlist.js";
+import { CHATLIST_PICK_ID, CHATLIST_NEW_MODAL_ID } from "../chat-list.js";
 
 export function registerHandlers(client: Client): void {
   client.on(Events.InteractionCreate, async (interaction) => {
@@ -174,6 +176,18 @@ export function registerHandlers(client: Client): void {
       /* ── Project open select menu ── */
       if (interaction.isStringSelectMenu() && interaction.customId === PROJECT_OPEN_SELECT_ID) {
         await handleProjectOpenSelect(client, interaction);
+        return;
+      }
+
+      /* ── Chat list project picker ── */
+      if (interaction.isStringSelectMenu() && interaction.customId.startsWith(CHATLIST_PICK_ID)) {
+        await handleChatlistPick(client, interaction);
+        return;
+      }
+
+      /* ── Chat list new project modal ── */
+      if (interaction.isModalSubmit() && interaction.customId === CHATLIST_NEW_MODAL_ID) {
+        await handleChatlistModal(client, interaction);
         return;
       }
 

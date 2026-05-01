@@ -7,6 +7,7 @@ import type { PendingProjectCreate } from "./pending-project.js";
 import { logErr, logOut } from "../stdio-log.js";
 import { syncProviderEmoji } from "../provisioner.js";
 import { loadSettings } from "../config.js";
+import { startChatListRefresh } from "./chat-list.js";
 import { SessionStore } from "../session-store.js";
 import {
   AccessStore,
@@ -78,6 +79,7 @@ export function createClient(options: CreateClientOptions = {}): Client {
         const guild = await c.guilds.fetch(guildId);
         await syncProviderEmoji(guild);
       } catch {}
+      startChatListRefresh(client, guildId);
     }
 
     /* Optional: pre-download/load the Whisper model so the first voice

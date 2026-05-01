@@ -15,6 +15,7 @@ import {
   type ButtonInteraction,
   type ChatInputCommandInteraction,
   type Interaction,
+  type ModalSubmitInteraction,
   type RepliableInteraction,
   type StringSelectMenuInteraction,
 } from "discord.js";
@@ -207,7 +208,7 @@ export function projectWorkspaceCwd(settings: Settings, projectChannelName: stri
 }
 
 export async function replyEphemeralEmbed(
-  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ButtonInteraction,
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ButtonInteraction | ModalSubmitInteraction,
   payload: { title: string; description: string; ok?: boolean },
   editExtras?: { components: [] },
 ): Promise<void> {

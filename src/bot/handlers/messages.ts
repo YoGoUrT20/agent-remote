@@ -18,6 +18,7 @@ import {
   type VoiceTranscription,
 } from "../../voice/index.js";
 import { downloadAllAttachments } from "../../attachments.js";
+import { triggerChatListUpdate } from "../chat-list.js";
 import type { WhisperDType } from "../../voice/transcribe.js";
 import {
   BOT_COMMANDS_CHANNEL,
@@ -364,6 +365,7 @@ export function registerMessageHandler(client: Client): void {
       const pingEnabled = access.pingOnResponse;
       await runSerial(threadCh.id, async () => {
         try {
+          if (message.guildId) triggerChatListUpdate(client, message.guildId);
           await threadCh.sendTyping();
           await session.adapter.sendTurn({ threadId: threadCh.id, input: text, attachments });
           const activeModel = session.adapter.getSessionModel(threadCh.id) ?? client.modelOverrides.get(threadCh.id);
@@ -375,6 +377,7 @@ export function registerMessageHandler(client: Client): void {
             pingUserId: pingEnabled ? message.author.id : undefined,
           });
           persistSessionId(client, threadCh.id, session.adapter, pk);
+          if (message.guildId) triggerChatListUpdate(client, message.guildId);
         } catch (e) {
           console.error(e);
           try {
@@ -458,6 +461,7 @@ export function registerMessageHandler(client: Client): void {
       adapter = null;
       const pingEnabledNewThread = access.pingOnResponse;
       await runSerial(thread.id, async () => {
+        if (message.guildId) triggerChatListUpdate(client, message.guildId);
         const newSessionModel = session.adapter.getSessionModel(thread.id) ?? channelModelOverride;
         await streamAssistantRepliesEmbed(thread, session.adapter, {
           fallbackThreadTitle: text,
@@ -466,6 +470,7 @@ export function registerMessageHandler(client: Client): void {
           pingUserId: pingEnabledNewThread ? message.author.id : undefined,
         });
         persistSessionId(client, thread.id, session.adapter, pk);
+        if (message.guildId) triggerChatListUpdate(client, message.guildId);
       });
     } catch (e) {
       if (adapter) {

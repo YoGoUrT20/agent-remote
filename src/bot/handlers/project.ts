@@ -12,11 +12,13 @@ import {
   StringSelectMenuBuilder,
   type ButtonInteraction,
   type ChatInputCommandInteraction,
+  type ModalSubmitInteraction,
   type StringSelectMenuInteraction,
 } from "discord.js";
 import { loadSettings } from "../../config.js";
 import {
   BOT_COMMANDS_CHANNEL,
+  normalizeCategoryChannelName,
   PROVIDERS,
   resolvedProviderEmojiURL,
   type ProviderKey,
@@ -44,7 +46,7 @@ import {
 
 async function createProjectDiscordChannelOnly(
   client: Client,
-  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ButtonInteraction,
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ButtonInteraction | ModalSubmitInteraction,
   v: ProjectOpenValidated,
   channelName: string,
   editExtras?: { components: [] },
@@ -102,22 +104,22 @@ async function createProjectDiscordChannelOnly(
 
 /* ── Offer or open project ── */
 
-async function offerOrOpenProject(
+export async function offerOrOpenProject(
   client: Client,
-  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction,
+  interaction: ChatInputCommandInteraction | StringSelectMenuInteraction | ModalSubmitInteraction,
   v: ProjectOpenValidated,
   rawName: string,
   dismissPicker: boolean,
 ): Promise<void> {
   const extras = dismissPicker ? { components: [] as [] } : undefined;
   const channelName = slugifyProjectChannelName(rawName);
-  const taken = v.cat.children.cache.some((c) => c.name === channelName);
-  if (taken) {
+  const existingCh = v.cat.children.cache.find((c) => c.name === channelName);
+  if (existingCh) {
     await replyEphemeralEmbed(
       interaction,
       {
         title: "Project already open",
-        description: `A project chat \`#${channelName}\` already exists in **${v.cat.name}**. Open that channel instead.`,
+        description: `${existingCh.toString()} already exists in **${normalizeCategoryChannelName(v.cat.name)}**. Open that channel instead.`,
         ok: false,
       },
       extras,
@@ -300,10 +302,11 @@ export async function handleProjectCreateConfirm(
   }
   const v: ProjectOpenValidated = { settings, guild, cat, pk };
   const channelName = slugifyProjectChannelName(pending.rawName);
-  if (v.cat.children.cache.some((c) => c.name === channelName)) {
+  const existingConfirmCh = v.cat.children.cache.find((c) => c.name === channelName);
+  if (existingConfirmCh) {
     await replyEphemeralEmbed(interaction, {
       title: "Project already open",
-      description: `A project chat \`#${channelName}\` already exists in **${v.cat.name}**.`,
+      description: `${existingConfirmCh.toString()} already exists in **${normalizeCategoryChannelName(v.cat.name)}**.`,
       ok: false,
     }, { components: [] });
     return;
