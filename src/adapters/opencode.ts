@@ -395,7 +395,25 @@ export class OpenCodeCliAdapter extends BaseAdapter {
           (typeof e.message === "string" && e.message) ||
           (e.error && typeof e.error.message === "string" ? e.error.message : "") ||
           JSON.stringify(ev);
-        this._offerRuntimeEvent(makeEvent(EventType.ERROR, msg));
+
+        const errorData = (e as any).error?.data as Record<string, unknown> | undefined;
+        const statusCode = errorData?.statusCode ?? errorData?.status;
+        const isRetryable = errorData?.isRetryable === true;
+        const isRateLimit =
+          statusCode === 429 ||
+          /rate.?limit/i.test(msg);
+
+        if (isRateLimit) {
+          if (isRetryable) {
+            this._offerRuntimeEvent(
+              makeEvent(EventType.TEXT_DELTA, `\n\n⏳ *Rate limited — retrying...*\n\n`, { streamKind: "status" }),
+            );
+          } else {
+            this._offerRuntimeEvent(makeEvent(EventType.ERROR, "⚠️ **Rate limit reached.**", { isRateLimit: true }));
+          }
+        } else {
+          this._offerRuntimeEvent(makeEvent(EventType.ERROR, msg));
+        }
         return;
       }
 

@@ -1,9 +1,13 @@
 import {
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
   ChannelType,
   Client,
   EmbedBuilder,
   Events,
   ThreadAutoArchiveDuration,
+  type ButtonInteraction,
   type ThreadChannel,
 } from "discord.js";
 import type { BaseAdapter } from "../../adapters/base.js";
@@ -39,14 +43,23 @@ import {
 } from "./utils.js";
 import { debug, warn as logWarn, error as logError } from "../../logger.js";
 
+export const RATE_LIMIT_RETRY_ID = "rl_retry:";
+
 /* ── Streaming embed for assistant replies ── */
 
 async function streamAssistantRepliesEmbed(
   thread: ThreadChannel,
   adapter: BaseAdapter,
-  options: { fallbackThreadTitle: string; providerKey: ProviderKey; skipRename?: boolean; modelLabel?: string; pingUserId?: string },
+  options: {
+    fallbackThreadTitle: string;
+    providerKey: ProviderKey;
+    skipRename?: boolean;
+    modelLabel?: string;
+    pingUserId?: string;
+    rateLimitRetry?: { client: Client; text: string; attachments: Array<{ type: string; mimeType: string; data: string; fileName?: string }> | undefined };
+  },
 ): Promise<void> {
-  const { fallbackThreadTitle, providerKey, skipRename = false, modelLabel, pingUserId } = options;
+  const { fallbackThreadTitle, providerKey, skipRename = false, modelLabel, pingUserId, rateLimitRetry } = options;
   let reasoning = "";
   let response = "";
   let lastEdit = 0;
@@ -156,12 +169,39 @@ async function streamAssistantRepliesEmbed(
     } else if (event.type === "error") {
       clearInterval(tickTimer);
       const err = (event.data || "error").slice(0, MAX_EMBED_DESC);
+      const isRateLimit = event.metadata?.isRateLimit === true;
+      const resetsAt = typeof event.metadata?.resetsAt === "number" ? event.metadata.resetsAt : undefined;
+
+      let components: ActionRowBuilder<ButtonBuilder>[] = [];
+      if (isRateLimit && rateLimitRetry) {
+        const customId = `${RATE_LIMIT_RETRY_ID}${thread.id}:${Date.now()}`;
+        rateLimitRetry.client.pendingRateLimitRetries.set(customId, {
+          thread,
+          text: rateLimitRetry.text,
+          attachments: rateLimitRetry.attachments,
+          providerKey,
+          resetsAt,
+          modelLabel,
+          pingUserId,
+        });
+        components = [
+          new ActionRowBuilder<ButtonBuilder>().addComponents(
+            new ButtonBuilder()
+              .setCustomId(customId)
+              .setLabel("Retry when limit resets")
+              .setStyle(ButtonStyle.Primary)
+              .setEmoji("⏳"),
+          ),
+        ];
+      }
+
       try {
         await statusMsg.edit({
           embeds: [buildEmbed(err, 0xed4245, { elapsed: liveElapsed() })],
+          components,
         });
       } catch {
-        await thread.send({ embeds: [buildEmbed(err, 0xed4245, { elapsed: liveElapsed() })] });
+        await thread.send({ embeds: [buildEmbed(err, 0xed4245, { elapsed: liveElapsed() })], components });
       }
       hasError = true;
     } else if (event.type === "done") {
@@ -282,6 +322,58 @@ async function resolveInput(message: import("discord.js").Message, settings: Set
   }
 }
 
+/* ── Rate-limit retry button handler ── */
+
+export async function handleRateLimitRetry(client: Client, interaction: ButtonInteraction): Promise<void> {
+  const entry = client.pendingRateLimitRetries.get(interaction.customId);
+  if (!entry) {
+    await interaction.reply({ content: "This retry is no longer available.", flags: 64 });
+    return;
+  }
+  client.pendingRateLimitRetries.delete(interaction.customId);
+
+  const { thread, text, attachments, providerKey, resetsAt, modelLabel, pingUserId } = entry;
+
+  const delayMs = resetsAt ? Math.max(0, resetsAt * 1000 - Date.now()) + 1500 : 5000;
+  const waitDesc = resetsAt
+    ? `⏳ Rate limit — retrying <t:${resetsAt}:R>...`
+    : "⏳ Rate limit — retrying in ~5s...";
+
+  const waitEmbed = new EmbedBuilder().setColor(0xfee75c).setDescription(waitDesc);
+  await interaction.update({ embeds: [waitEmbed], components: [] });
+
+  setTimeout(() => {
+    void runSerial(thread.id, async () => {
+      const sess = client.chatRegistry.get(thread.id);
+      if (!sess) return;
+      try {
+        await sess.adapter.sendTurn({ threadId: thread.id, input: text, attachments });
+        await streamAssistantRepliesEmbed(thread, sess.adapter, {
+          fallbackThreadTitle: thread.name,
+          providerKey: providerKey as ProviderKey,
+          skipRename: true,
+          modelLabel,
+          pingUserId,
+          rateLimitRetry: { client, text, attachments },
+        });
+        persistSessionId(client, thread.id, sess.adapter, providerKey as ProviderKey);
+      } catch (e) {
+        console.error("[rate-limit-retry]", e);
+        try {
+          await thread.send({
+            embeds: [
+              new EmbedBuilder()
+                .setColor(0xed4245)
+                .setTitle("Retry failed")
+                .setDescription(e instanceof Error ? e.message : String(e)),
+            ],
+          });
+        } catch {}
+      }
+    });
+  }, delayMs);
+}
+
 /* ── Register MessageCreate handler ── */
 
 export function registerMessageHandler(client: Client): void {
@@ -397,6 +489,7 @@ export function registerMessageHandler(client: Client): void {
             skipRename: true,
             modelLabel: resolveModelLabel(pk, activeModel),
             pingUserId: pingEnabled ? message.author.id : undefined,
+            rateLimitRetry: { client, text, attachments },
           });
           persistSessionId(client, threadCh.id, session.adapter, pk);
           if (message.guildId) triggerChatListUpdate(client, message.guildId);
@@ -490,6 +583,7 @@ export function registerMessageHandler(client: Client): void {
           providerKey: pk,
           modelLabel: resolveModelLabel(pk, newSessionModel),
           pingUserId: pingEnabledNewThread ? message.author.id : undefined,
+          rateLimitRetry: { client, text, attachments: newThreadAttachmentPayload },
         });
         persistSessionId(client, thread.id, session.adapter, pk);
         if (message.guildId) triggerChatListUpdate(client, message.guildId);

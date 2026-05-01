@@ -37,6 +37,7 @@ export function createClient(options: CreateClientOptions = {}): Client {
   client.projectStore = new ProjectStore(db);
   client.pendingProjectCreates = new Map<string, PendingProjectCreate>();
   client.modelOverrides = new Map<string, string>();
+  client.pendingRateLimitRetries = new Map();
   client.onInstallComplete = options.onInstallComplete ?? null;
   registerHandlers(client);
   client.once(Events.ClientReady, async (c) => {

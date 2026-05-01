@@ -563,7 +563,20 @@ export class CodexCliAdapter extends BaseAdapter {
         logError(`[codex-adapter] server error notification: ${message}`);
         /* Only emit if it's fatal (willRetry = false) */
         const willRetry = params.willRetry === true;
-        if (!willRetry) {
+        const isRateLimit =
+          /rate.?limit/i.test(message) ||
+          params.code === "rate_limit_exceeded" ||
+          params.status === 429;
+
+        if (isRateLimit) {
+          if (willRetry) {
+            this._offerRuntimeEvent(
+              makeEvent(EventType.TEXT_DELTA, `\n\n⏳ *Rate limited — retrying...*\n\n`, { streamKind: "status" }),
+            );
+          } else {
+            this._offerRuntimeEvent(makeEvent(EventType.ERROR, "⚠️ **Rate limit reached.**", { isRateLimit: true }));
+          }
+        } else if (!willRetry) {
           this._offerRuntimeEvent(makeEvent(EventType.ERROR, message));
         }
         return;

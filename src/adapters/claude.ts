@@ -422,7 +422,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
           }
           logWarn(`[claude-adapter] rate limit rejected: ${JSON.stringify(info)}`);
           if (!(ctx as any).turnErrorEmitted) {
-            this._offerRuntimeEvent(makeEvent(EventType.ERROR, errorMsg));
+            this._offerRuntimeEvent(makeEvent(EventType.ERROR, errorMsg, { isRateLimit: true, resetsAt: resetsAt ?? null }));
             (ctx as any).turnErrorEmitted = true;
           }
         } else if (info && info.status === "allowed_warning") {

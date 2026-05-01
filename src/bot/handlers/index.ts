@@ -52,7 +52,7 @@ import {
 import { handleModelCommand, handleModelSelectMenu } from "./model.js";
 import { handleInstallCommand, handleInstallConfirm, handleInstallCancel } from "./install.js";
 import { handleProjectOpenAutocomplete, handleModelAutocomplete } from "./autocomplete.js";
-import { registerMessageHandler } from "./messages.js";
+import { handleRateLimitRetry, RATE_LIMIT_RETRY_ID, registerMessageHandler } from "./messages.js";
 import { handleChatlistPick, handleChatlistModal } from "./chatlist.js";
 import { CHATLIST_PICK_ID, CHATLIST_NEW_MODAL_ID } from "../chat-list.js";
 
@@ -164,6 +164,10 @@ export function registerHandlers(client: Client): void {
         }
         if (interaction.customId === "ar_install_cancel") {
           await handleInstallCancel(client, interaction);
+          return;
+        }
+        if (interaction.customId.startsWith(RATE_LIMIT_RETRY_ID)) {
+          await handleRateLimitRetry(client, interaction);
           return;
         }
       }
