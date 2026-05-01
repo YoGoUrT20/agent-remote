@@ -11,6 +11,7 @@ import {
   makeEvent,
 } from "./base.js";
 import type { Settings } from "../config.js";
+import { debug, info as logInfo, warn as logWarn, error as logError } from "../logger.js";
 
 /* ── JSON-RPC types ── */
 
@@ -95,7 +96,7 @@ export class CodexCliAdapter extends BaseAdapter {
     const cwd = input.cwd || this._defaultCwd;
     const model = input.model || this._model;
 
-    console.error(`[codex-adapter] startSession threadId=${input.threadId} cwd=${cwd}`);
+    debug(`[codex-adapter] startSession threadId=${input.threadId} cwd=${cwd}`);
 
     if (this._sessions.has(input.threadId)) {
       throw new Error(`session already started for thread ${input.threadId}`);
@@ -146,12 +147,12 @@ export class CodexCliAdapter extends BaseAdapter {
     const stderrRl = createInterface({ input: child.stderr });
     stderrRl.on("line", (rawLine) => {
       const line = rawLine.replace(ANSI_ESCAPE_REGEX, "").trim();
-      if (line) console.error(`[codex-adapter][stderr] ${line}`);
+      if (line) debug(`[codex-adapter][stderr] ${line}`);
     });
 
     /* Process lifecycle */
     child.on("error", (err) => {
-      console.error(`[codex-adapter] process error for ${input.threadId}:`, err.message);
+      logError(`[codex-adapter] process error for ${input.threadId}: ${err.message}`);
       ctx.session.status = "error";
       ctx.session.lastError = err.message;
       this._offerRuntimeEvent(makeEvent(EventType.ERROR, err.message));
@@ -159,7 +160,7 @@ export class CodexCliAdapter extends BaseAdapter {
     });
 
     child.on("exit", (code) => {
-      console.error(`[codex-adapter] process exited for ${input.threadId} with code ${code}`);
+      logInfo(`[codex-adapter] process exited for ${input.threadId} with code ${code}`);
       ctx.session.status = "closed";
       if (ctx.currentTurnId) {
         ctx.currentTurnId = null;
@@ -217,7 +218,7 @@ export class CodexCliAdapter extends BaseAdapter {
 
       session.status = "ready";
       session.updatedAt = new Date().toISOString();
-      console.error(`[codex-adapter] session ready for thread ${input.threadId} (provider=${providerThreadId})`);
+      logInfo(`[codex-adapter] session ready for thread ${input.threadId} (provider=${providerThreadId})`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       session.status = "error";
@@ -233,9 +234,7 @@ export class CodexCliAdapter extends BaseAdapter {
   /* ── Send turn ── */
 
   override async sendTurn(input: ProviderSendTurnInput): Promise<ProviderTurnStartResult> {
-    console.error(
-      `[codex-adapter] sendTurn threadId=${input.threadId} input=${input.input?.slice(0, 50)}...`,
-    );
+    debug(`[codex-adapter] sendTurn threadId=${input.threadId} input=${input.input?.slice(0, 50)}...`);
 
     const ctx = this._sessions.get(input.threadId);
     if (!ctx) {
@@ -384,7 +383,7 @@ export class CodexCliAdapter extends BaseAdapter {
     try {
       msg = JSON.parse(line) as JsonRpcMessage;
     } catch {
-      console.error(`[codex-adapter] invalid JSON from codex: ${line.slice(0, 200)}`);
+      logWarn(`[codex-adapter] invalid JSON from codex: ${line.slice(0, 200)}`);
       return;
     }
 
@@ -411,7 +410,7 @@ export class CodexCliAdapter extends BaseAdapter {
       req.method.includes("requestApproval") ||
       req.method.includes("requestUserInput")
     ) {
-      console.error(`[codex-adapter] auto-approving: ${req.method}`);
+      debug(`[codex-adapter] auto-approving: ${req.method}`);
 
       if (req.method.includes("requestUserInput")) {
         /* For user input requests, respond with empty string */
@@ -430,7 +429,7 @@ export class CodexCliAdapter extends BaseAdapter {
     }
 
     /* Unknown server request — respond with error to not block the server */
-    console.error(`[codex-adapter] unknown server request: ${req.method}`);
+    logWarn(`[codex-adapter] unknown server request: ${req.method}`);
     this._writeMessage(ctx, {
       id: req.id,
       error: { code: -32601, message: `Method not handled: ${req.method}` },
@@ -443,7 +442,7 @@ export class CodexCliAdapter extends BaseAdapter {
     const id = String(resp.id);
     const pending = ctx.pending.get(id);
     if (!pending) {
-      console.error(`[codex-adapter] response for unknown request id=${id}`);
+      logWarn(`[codex-adapter] response for unknown request id=${id}`);
       return;
     }
     ctx.pending.delete(id);
@@ -561,7 +560,7 @@ export class CodexCliAdapter extends BaseAdapter {
           typeof params.message === "string"
             ? params.message
             : JSON.stringify(params);
-        console.error(`[codex-adapter] server error notification: ${message}`);
+        logError(`[codex-adapter] server error notification: ${message}`);
         /* Only emit if it's fatal (willRetry = false) */
         const willRetry = params.willRetry === true;
         if (!willRetry) {
@@ -607,7 +606,7 @@ export class CodexCliAdapter extends BaseAdapter {
   private _writeMessage(ctx: CodexSessionContext, message: unknown): void {
     const encoded = JSON.stringify(message);
     if (!ctx.child.stdin.writable) {
-      console.error(`[codex-adapter] cannot write to codex stdin (not writable)`);
+      logError(`[codex-adapter] cannot write to codex stdin (not writable)`);
       return;
     }
     ctx.child.stdin.write(`${encoded}\n`);

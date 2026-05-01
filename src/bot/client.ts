@@ -1,27 +1,25 @@
-import { join } from "node:path";
 import { Client, Events, GatewayIntentBits, Partials, Team } from "discord.js";
 import { bunRestOptions } from "./bun-rest.js";
 import { registerHandlers } from "./handlers/index.js";
 import { ChatRegistry } from "./registry.js";
 import type { PendingProjectCreate } from "./pending-project.js";
-import { logErr, logOut } from "../stdio-log.js";
+import { info, error as logError } from "../logger.js";
 import { syncProviderEmoji } from "../provisioner.js";
 import { loadSettings } from "../config.js";
 import { startChatListRefresh } from "./chat-list.js";
 import { SessionStore } from "../session-store.js";
-import {
-  AccessStore,
-  defaultAccessStorePath,
-  effectiveAccess,
-} from "../access-store.js";
-import { ModelStore, defaultModelStorePath } from "../model-store.js";
+import { AccessStore, effectiveAccess } from "../access-store.js";
+import { ModelStore } from "../model-store.js";
 import { ProjectStore } from "../project-store.js";
+import { openDb, defaultDbPath } from "../db.js";
 
 export interface CreateClientOptions {
   onInstallComplete?: (() => void | Promise<void>) | null;
 }
 
 export function createClient(options: CreateClientOptions = {}): Client {
+  const db = openDb(defaultDbPath());
+
   const client = new Client({
     intents: [
       GatewayIntentBits.Guilds,
@@ -33,20 +31,16 @@ export function createClient(options: CreateClientOptions = {}): Client {
     rest: bunRestOptions(),
   });
   client.chatRegistry = new ChatRegistry();
-  client.sessionStore = new SessionStore(
-    join(process.env.HOME ?? process.env.USERPROFILE ?? ".", ".agent-remote", "sessions.json"),
-  );
-  client.accessStore = new AccessStore(defaultAccessStorePath());
-  client.modelStore = new ModelStore(defaultModelStorePath());
-  client.projectStore = new ProjectStore(
-    join(process.env.HOME ?? process.env.USERPROFILE ?? ".", ".agent-remote", "projects.json"),
-  );
+  client.sessionStore = new SessionStore(db);
+  client.accessStore = new AccessStore(db);
+  client.modelStore = new ModelStore(db);
+  client.projectStore = new ProjectStore(db);
   client.pendingProjectCreates = new Map<string, PendingProjectCreate>();
   client.modelOverrides = new Map<string, string>();
   client.onInstallComplete = options.onInstallComplete ?? null;
   registerHandlers(client);
   client.once(Events.ClientReady, async (c) => {
-    logOut(`Discord bot ready as ${c.user.tag} (${c.user.id})`);
+    info(`Discord bot ready as ${c.user.tag} (${c.user.id})`);
 
     /* Auto-detect the application owner and seed the access store if no owner
        is configured yet (env nor runtime). If the app belongs to a Team we use
@@ -64,11 +58,11 @@ export function createClient(options: CreateClientOptions = {}): Client {
         }
         if (detectedId) {
           client.accessStore.setOwner(detectedId);
-          logOut(`Auto-detected bot owner: ${detectedId}`);
+          info(`Auto-detected bot owner: ${detectedId}`);
         }
       }
     } catch (e) {
-      logErr(`Could not auto-detect bot owner: ${String(e)}`);
+      logError(`Could not auto-detect bot owner: ${String(e)}`);
     }
 
     // Sync provider emoji from guild so embeds can use them without re-install
@@ -82,9 +76,8 @@ export function createClient(options: CreateClientOptions = {}): Client {
       startChatListRefresh(client, guildId);
     }
 
-    /* Optional: pre-download/load the Whisper model so the first voice
-       message doesn't pay the load cost. */
-    if (settings.voiceEnabled && settings.voiceWarmup) {
+    // Pre-load the Whisper model on startup so the first voice message has no delay.
+    if (settings.voiceEnabled) {
       void (async () => {
         try {
           const { warmupWhisper } = await import("../voice/index.js");
@@ -93,15 +86,15 @@ export function createClient(options: CreateClientOptions = {}): Client {
             dtype: settings.voiceWhisperDtype as never,
             language: settings.voiceLanguage,
           });
-          logOut(`Whisper model warmed up: ${settings.voiceWhisperModel}`);
+          info(`Whisper model warmed up: ${settings.voiceWhisperModel}`);
         } catch (e) {
-          logErr(`Whisper warmup failed: ${String(e)}`);
+          logError(`Whisper warmup failed: ${String(e)}`);
         }
       })();
     }
   });
   client.on(Events.ShardError, (err) => {
-    logErr(`Discord shard error: ${String(err)}`);
+    logError(`Discord shard error: ${String(err)}`);
   });
   return client;
 }

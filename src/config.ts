@@ -41,7 +41,6 @@ export interface Settings {
   voiceWhisperModel: string;
   voiceWhisperDtype: string;
   voiceLanguage: string | null;
-  voiceWarmup: boolean;
   enabledProviderKeys(): string[];
 }
 
@@ -97,7 +96,6 @@ export function loadSettings(): Settings {
     voiceWhisperModel: process.env.VOICE_WHISPER_MODEL ?? "onnx-community/whisper-base",
     voiceWhisperDtype: process.env.VOICE_WHISPER_DTYPE ?? "q8",
     voiceLanguage: process.env.VOICE_LANGUAGE?.trim() || null,
-    voiceWarmup: parseBoolEnv(process.env.VOICE_WARMUP, false),
     enabledProviderKeys() {
       if (!enabledProviders) return [];
       return enabledProviders.split(",").map((k) => k.trim()).filter(Boolean);

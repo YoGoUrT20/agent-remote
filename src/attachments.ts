@@ -1,5 +1,6 @@
 import type { Attachment, Message } from "discord.js";
 import { isVoiceAttachment } from "./voice/index.js";
+import { warn as logWarn } from "./logger.js";
 
 const IMAGE_MIME_TYPES = new Set([
   "image/png",
@@ -94,7 +95,7 @@ export async function downloadAllAttachments(message: Message): Promise<Download
     if (r.status === "fulfilled") {
       downloaded.push(r.value);
     } else {
-      console.error("[attachments] download failed:", r.reason);
+      logWarn(`[attachments] download failed: ${r.reason instanceof Error ? r.reason.message : String(r.reason)}`);
     }
   }
   return downloaded;

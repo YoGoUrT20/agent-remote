@@ -1,5 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import type { Database } from "bun:sqlite";
 
 export interface PersistedSession {
   sessionId: string;
@@ -10,47 +9,47 @@ export interface PersistedSession {
 }
 
 /**
- * Simple JSON-file store that maps Discord thread IDs to Claude session IDs
+ * SQLite-backed store that maps Discord thread IDs to agent session metadata
  * so conversations survive bot restarts.
  */
 export class SessionStore {
-  private _path: string;
-  private _data: Record<string, PersistedSession> = {};
+  private _db: Database;
 
-  constructor(filePath: string) {
-    this._path = filePath;
-    this._load();
+  constructor(db: Database) {
+    this._db = db;
   }
 
   get(threadId: string): PersistedSession | undefined {
-    return this._data[threadId];
+    const row = this._db
+      .query<
+        { session_id: string; cwd: string; provider_key: string; model: string | null },
+        [string]
+      >("SELECT session_id, cwd, provider_key, model FROM sessions WHERE thread_id = ?")
+      .get(threadId);
+    if (!row) return undefined;
+    return {
+      sessionId: row.session_id,
+      cwd: row.cwd,
+      providerKey: row.provider_key,
+      model: row.model ?? undefined,
+    };
   }
 
   set(threadId: string, entry: PersistedSession): void {
-    this._data[threadId] = entry;
-    this._save();
+    this._db
+      .query(
+        `INSERT INTO sessions (thread_id, session_id, cwd, provider_key, model)
+         VALUES (?, ?, ?, ?, ?)
+         ON CONFLICT(thread_id) DO UPDATE SET
+           session_id   = excluded.session_id,
+           cwd          = excluded.cwd,
+           provider_key = excluded.provider_key,
+           model        = excluded.model`,
+      )
+      .run(threadId, entry.sessionId, entry.cwd, entry.providerKey, entry.model ?? null);
   }
 
   delete(threadId: string): void {
-    delete this._data[threadId];
-    this._save();
-  }
-
-  private _load(): void {
-    try {
-      const raw = readFileSync(this._path, "utf-8");
-      this._data = JSON.parse(raw);
-    } catch {
-      this._data = {};
-    }
-  }
-
-  private _save(): void {
-    try {
-      mkdirSync(dirname(this._path), { recursive: true });
-      writeFileSync(this._path, JSON.stringify(this._data, null, 2), "utf-8");
-    } catch (e) {
-      console.error(`[session-store] failed to save: ${e}`);
-    }
+    this._db.query("DELETE FROM sessions WHERE thread_id = ?").run(threadId);
   }
 }

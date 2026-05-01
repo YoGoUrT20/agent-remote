@@ -1,5 +1,4 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import type { Database } from "bun:sqlite";
 
 export interface PersistedProject {
   channelId: string;
@@ -7,51 +6,45 @@ export interface PersistedProject {
 }
 
 /**
- * Simple JSON-file store that maps Discord channel IDs to PersistedProject
+ * SQLite-backed store that maps Discord channel IDs to PersistedProject
  * to verify that a channel was created by the bot via /project open.
  */
 export class ProjectStore {
-  private _path: string;
-  private _data: Record<string, PersistedProject> = {};
+  private _db: Database;
 
-  constructor(filePath: string) {
-    this._path = filePath;
-    this._load();
+  constructor(db: Database) {
+    this._db = db;
   }
 
   has(channelId: string): boolean {
-    return !!this._data[channelId];
+    const row = this._db
+      .query<{ channel_id: string }, [string]>(
+        "SELECT channel_id FROM projects WHERE channel_id = ?",
+      )
+      .get(channelId);
+    return !!row;
   }
 
   get(channelId: string): PersistedProject | undefined {
-    return this._data[channelId];
+    const row = this._db
+      .query<{ channel_id: string; created_at: number }, [string]>(
+        "SELECT channel_id, created_at FROM projects WHERE channel_id = ?",
+      )
+      .get(channelId);
+    if (!row) return undefined;
+    return { channelId: row.channel_id, createdAt: row.created_at };
   }
 
   set(channelId: string, entry: PersistedProject): void {
-    this._data[channelId] = entry;
-    this._save();
+    this._db
+      .query(
+        `INSERT INTO projects (channel_id, created_at) VALUES (?, ?)
+         ON CONFLICT(channel_id) DO UPDATE SET created_at = excluded.created_at`,
+      )
+      .run(channelId, entry.createdAt);
   }
 
   delete(channelId: string): void {
-    delete this._data[channelId];
-    this._save();
-  }
-
-  private _load(): void {
-    try {
-      const raw = readFileSync(this._path, "utf-8");
-      this._data = JSON.parse(raw);
-    } catch {
-      this._data = {};
-    }
-  }
-
-  private _save(): void {
-    try {
-      mkdirSync(dirname(this._path), { recursive: true });
-      writeFileSync(this._path, JSON.stringify(this._data, null, 2), "utf-8");
-    } catch (e) {
-      console.error(`[project-store] failed to save: ${e}`);
-    }
+    this._db.query("DELETE FROM projects WHERE channel_id = ?").run(channelId);
   }
 }

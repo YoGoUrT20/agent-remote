@@ -23,6 +23,7 @@ import {
   makeEvent,
 } from "./base.js";
 import type { Settings } from "../config.js";
+import { debug, info as logInfo, warn as logWarn, error as logError } from "../logger.js";
 
 /**
  * Resolve the Claude Code native binary. The SDK requires the native binary
@@ -34,7 +35,7 @@ import type { Settings } from "../config.js";
  */
 function resolveNativeClaudeBinary(hint: string): string {
   if (hint) {
-    console.error(`[claude-adapter] using explicit binary path: ${hint}`);
+    debug(`[claude-adapter] using explicit binary path: ${hint}`);
     return hint;
   }
 
@@ -48,7 +49,7 @@ function resolveNativeClaudeBinary(hint: string): string {
         for (let i = dirs.length - 1; i >= 0; i--) {
           const candidate = join(ccDir, dirs[i], "claude.exe");
           if (existsSync(candidate)) {
-            console.error(`[claude-adapter] resolved native binary: ${candidate}`);
+            debug(`[claude-adapter] resolved native binary: ${candidate}`);
             return candidate;
           }
         }
@@ -68,7 +69,7 @@ function resolveNativeClaudeBinary(hint: string): string {
     }
   }
 
-  console.error(`[claude-adapter] no native binary found, falling back to "claude"`);
+  logWarn(`[claude-adapter] no native binary found, falling back to "claude"`);
   return "claude";
 }
 
@@ -176,7 +177,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
     const cwd = input.cwd || this._defaultCwd;
     const model = input.model || this._model;
 
-    console.error(`[claude-adapter] startSession threadId=${input.threadId} cwd=${cwd}`);
+    debug(`[claude-adapter] startSession threadId=${input.threadId} cwd=${cwd}`);
 
     if (this._sessions.has(input.threadId)) {
       throw new Error(`session already started for thread ${input.threadId}`);
@@ -226,7 +227,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
     let queryRuntime: ClaudeQueryRuntime;
     try {
       queryRuntime = query({ prompt: promptQueue, options: queryOptions }) as ClaudeQueryRuntime;
-      console.error(`[claude-adapter] query() created for thread ${input.threadId}`);
+      debug(`[claude-adapter] query() created for thread ${input.threadId}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       throw new Error(`Failed to start Claude runtime session: ${msg}`);
@@ -259,7 +260,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
     ctx.streamPromise = this._consumeStream(input.threadId, ctx);
 
     this._sessions.set(input.threadId, ctx);
-    console.error(`[claude-adapter] session registered for thread ${input.threadId}`);
+    logInfo(`[claude-adapter] session registered for thread ${input.threadId}`);
 
     return session;
   }
@@ -278,7 +279,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
     } catch (e) {
       if (ctx.stopped) return;
       const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[claude-adapter] stream error for ${threadId}:`, msg);
+      logError(`[claude-adapter] stream error for ${threadId}: ${msg}`);
       this._offerRuntimeEvent(makeEvent(EventType.ERROR, msg));
       this._offerRuntimeEvent(makeEvent(EventType.DONE));
     }
@@ -377,7 +378,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
           } else {
             errorMsg = `Claude Code returned an error (${subtype || "unknown"}).`;
           }
-          console.error(`[claude-adapter] result error: subtype=${subtype} errors=${JSON.stringify(errors)}`);
+          logWarn(`[claude-adapter] result error: subtype=${subtype} errors=${JSON.stringify(errors)}`);
           if (!(ctx as any).turnErrorEmitted) {
             this._offerRuntimeEvent(makeEvent(EventType.ERROR, errorMsg));
             (ctx as any).turnErrorEmitted = true;
@@ -393,6 +394,10 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
         ctx.session.status = "ready";
         ctx.session.activeTurnId = undefined;
         ctx.session.updatedAt = new Date().toISOString();
+        if ((ctx as any).pendingRateLimitWarning) {
+          this._offerRuntimeEvent(makeEvent(EventType.TEXT_DELTA, (ctx as any).pendingRateLimitWarning, { streamKind: "status" }));
+          (ctx as any).pendingRateLimitWarning = undefined;
+        }
         this._offerRuntimeEvent(makeEvent(EventType.DONE, "", Object.keys(doneMeta).length > 0 ? doneMeta : null));
 
         /* Reset counters for next turn */
@@ -415,7 +420,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
           if (resetsAt) {
             errorMsg += ` Resets at <t:${resetsAt}:t> (<t:${resetsAt}:R>).`;
           }
-          console.error(`[claude-adapter] rate limit rejected: ${JSON.stringify(info)}`);
+          logWarn(`[claude-adapter] rate limit rejected: ${JSON.stringify(info)}`);
           if (!(ctx as any).turnErrorEmitted) {
             this._offerRuntimeEvent(makeEvent(EventType.ERROR, errorMsg));
             (ctx as any).turnErrorEmitted = true;
@@ -424,10 +429,8 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
           const utilization = typeof info.utilization === "number" ? info.utilization : undefined;
           if (utilization != null) {
             const pct = Math.round(utilization * 100);
-            console.error(`[claude-adapter] rate limit warning: ${pct}% utilization`);
-            this._offerRuntimeEvent(
-              makeEvent(EventType.TEXT_DELTA, `\n\n> ⚠️ *Rate limit warning: ${pct}% utilization*\n\n`, { streamKind: "status" }),
-            );
+            logWarn(`[claude-adapter] rate limit warning: ${pct}% utilization`);
+            (ctx as any).pendingRateLimitWarning = `\n\n> ⚠️ *Rate limit warning: ${pct}% utilization*\n\n`;
           }
         }
         return;
@@ -441,7 +444,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
           const maxRetries = typeof msgAny.max_retries === "number" ? msgAny.max_retries : 0;
           const errorType = typeof msgAny.error === "string" ? msgAny.error : "unknown";
           const errorStatus = typeof msgAny.error_status === "number" ? msgAny.error_status : null;
-          console.error(`[claude-adapter] API retry ${attempt}/${maxRetries} error=${errorType} status=${errorStatus}`);
+          logWarn(`[claude-adapter] API retry ${attempt}/${maxRetries} error=${errorType} status=${errorStatus}`);
 
           /* Surface user-facing errors for rate limits & billing */
           if (errorType === "rate_limit") {
@@ -478,7 +481,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
             max_output_tokens: "Maximum output tokens reached",
           };
           const label = errorLabels[errField] ?? `Error: ${errField}`;
-          console.error(`[claude-adapter] assistant message error: ${errField}`);
+          logError(`[claude-adapter] assistant message error: ${errField}`);
           if (!(ctx as any).turnErrorEmitted) {
             this._offerRuntimeEvent(makeEvent(EventType.ERROR, label));
             (ctx as any).turnErrorEmitted = true;
@@ -508,7 +511,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
   /* ── sendTurn: offer message to prompt queue ── */
 
   override async sendTurn(input: ProviderSendTurnInput): Promise<ProviderTurnStartResult> {
-    console.error(`[claude-adapter] sendTurn threadId=${input.threadId} input=${input.input?.slice(0, 50)}...`);
+    debug(`[claude-adapter] sendTurn threadId=${input.threadId} input=${input.input?.slice(0, 50)}...`);
 
     const ctx = this._sessions.get(input.threadId);
     if (!ctx) {
@@ -557,7 +560,7 @@ export class ClaudeAgentSdkAdapter extends BaseAdapter {
       },
     };
 
-    console.error(`[claude-adapter] offering user message to prompt queue`);
+    debug(`[claude-adapter] offering user message to prompt queue`);
     ctx.promptQueue.offer(userMessage);
 
     return {

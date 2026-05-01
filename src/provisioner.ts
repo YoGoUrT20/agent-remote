@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { debug, info as logInfo, warn as logWarn } from "./logger.js";
 import { ChannelType, type CategoryChannel, type Guild } from "discord.js";
 import {
   BOT_COMMANDS_CHANNEL,
@@ -55,7 +56,7 @@ export async function uploadProviderEmoji(guild: Guild, keys: string[]): Promise
     if (found) {
       resolvedProviderEmoji[key as ProviderKey] = `<:${found.name}:${found.id}>`;
       resolvedProviderEmojiURL[key as ProviderKey] = `https://cdn.discordapp.com/emojis/${found.id}.png`;
-      console.error(`[provisioner] emoji ${emojiName} already exists: ${found.id}`);
+      debug(`[provisioner] emoji ${emojiName} already exists: ${found.id}`);
       continue;
     }
 
@@ -71,9 +72,9 @@ export async function uploadProviderEmoji(guild: Guild, keys: string[]): Promise
       });
       resolvedProviderEmoji[key as ProviderKey] = `<:${created.name}:${created.id}>`;
       resolvedProviderEmojiURL[key as ProviderKey] = `https://cdn.discordapp.com/emojis/${created.id}.png`;
-      console.error(`[provisioner] uploaded emoji ${emojiName}: ${created.id}`);
+      logInfo(`[provisioner] uploaded emoji ${emojiName}: ${created.id}`);
     } catch (e) {
-      console.error(`[provisioner] failed to upload emoji ${emojiName}:`, e instanceof Error ? e.message : e);
+      logWarn(`[provisioner] failed to upload emoji ${emojiName}: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 }

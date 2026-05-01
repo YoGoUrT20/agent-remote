@@ -37,6 +37,7 @@ import {
   resolveModelLabel,
   slugifyThreadTitle,
 } from "./utils.js";
+import { debug, warn as logWarn, error as logError } from "../../logger.js";
 
 /* ── Streaming embed for assistant replies ── */
 
@@ -181,7 +182,8 @@ async function streamAssistantRepliesEmbed(
           await statusMsg.edit({
             embeds: [buildEmbed(body || "Done.", 0x57f287, stats)],
           });
-        } catch {
+        } catch (e) {
+          debug(`[messages] failed to edit done embed: ${e instanceof Error ? e.message : String(e)}`);
         }
         if (pingUserId) {
           try {
@@ -189,7 +191,9 @@ async function streamAssistantRepliesEmbed(
               content: `<@${pingUserId}>`,
               allowedMentions: { users: [pingUserId] },
             });
-          } catch {}
+          } catch (e) {
+            debug(`[messages] failed to send ping: ${e instanceof Error ? e.message : String(e)}`);
+          }
         }
       }
       break; // Turn complete — return so the next turn can create a new embed
@@ -203,14 +207,16 @@ async function streamAssistantRepliesEmbed(
         try {
           await thread.setName(slugifyThreadTitle(cliTitle));
           named = true;
-        } catch {
+        } catch (e) {
+          debug(`[messages] failed to set thread name: ${e instanceof Error ? e.message : String(e)}`);
         }
       }
     }
     if (!named) {
       try {
         await thread.setName(slugifyThreadTitle(fallbackThreadTitle));
-      } catch {
+      } catch (e) {
+        debug(`[messages] failed to set fallback thread name: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
   }
@@ -262,7 +268,7 @@ async function resolveInput(message: import("discord.js").Message, settings: Set
     if (!text) return { text: "", voice, voiceModelId: settings.voiceWhisperModel };
     return { text, voice, voiceModelId: settings.voiceWhisperModel };
   } catch (e) {
-    console.error("voice transcription failed:", e);
+    logWarn(`voice transcription failed: ${e instanceof Error ? e.message : String(e)}`);
     const errEmbed = new EmbedBuilder()
       .setColor(0xed4245)
       .setTitle("Voice transcription failed")
@@ -361,7 +367,7 @@ export function registerMessageHandler(client: Client): void {
           sess = { providerKey: pk, adapter };
           client.chatRegistry.add(threadCh.id, sess);
         } catch (e) {
-          console.error(e);
+          logError(`[messages] ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
           try {
             await threadCh.send({
               embeds: [
@@ -395,7 +401,7 @@ export function registerMessageHandler(client: Client): void {
           persistSessionId(client, threadCh.id, session.adapter, pk);
           if (message.guildId) triggerChatListUpdate(client, message.guildId);
         } catch (e) {
-          console.error(e);
+          logError(`[messages] ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
           try {
             await threadCh.send({
               embeds: [

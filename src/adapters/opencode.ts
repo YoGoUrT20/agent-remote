@@ -13,6 +13,7 @@ import {
   makeEvent,
 } from "./base.js";
 import type { Settings } from "../config.js";
+import { debug, warn as logWarn, error as logError } from "../logger.js";
 
 /* ── opencode JSON event shapes (subset we care about) ── */
 
@@ -225,7 +226,7 @@ export class OpenCodeCliAdapter extends BaseAdapter {
       child.stdin.end();
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error(`[opencode-adapter] stdin write failed: ${msg}`);
+      logError(`[opencode-adapter] stdin write failed: ${msg}`);
     }
 
     /* Stdout: parse JSON events */
@@ -236,11 +237,11 @@ export class OpenCodeCliAdapter extends BaseAdapter {
     const stderrRl = createInterface({ input: child.stderr });
     stderrRl.on("line", (line) => {
       const trimmed = line.trim();
-      if (trimmed) console.error(`[opencode-adapter][stderr] ${trimmed}`);
+      if (trimmed) debug(`[opencode-adapter][stderr] ${trimmed}`);
     });
 
     child.on("error", (err) => {
-      console.error(`[opencode-adapter] process error: ${err.message}`);
+      logError(`[opencode-adapter] process error: ${err.message}`);
       this._offerRuntimeEvent(makeEvent(EventType.ERROR, err.message));
       this._finalizeTurn(ctx);
     });
@@ -339,7 +340,7 @@ export class OpenCodeCliAdapter extends BaseAdapter {
     try {
       ev = JSON.parse(line) as OpenCodeEvent;
     } catch {
-      console.error(`[opencode-adapter] invalid JSON: ${line.slice(0, 200)}`);
+      logWarn(`[opencode-adapter] invalid JSON: ${line.slice(0, 200)}`);
       return;
     }
 

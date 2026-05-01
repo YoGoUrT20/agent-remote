@@ -15,6 +15,7 @@ import {
   type InteractionEditReplyOptions,
   type RepliableInteraction,
 } from "discord.js";
+import { warn as logWarn } from "../../logger.js";
 import { loadSettings } from "../../config.js";
 import {
   PROVIDERS,
@@ -450,7 +451,7 @@ export async function handleSettingsButtons(
         else if (app.owner) detected = app.owner.id;
         if (detected) client.accessStore.setOwner(detected);
       } catch (e) {
-        console.error(`Detect owner failed: ${String(e)}`);
+        logWarn(`[settings] detect owner failed: ${String(e)}`);
       }
       break;
     }

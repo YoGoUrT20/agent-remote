@@ -1,5 +1,5 @@
-import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import { dirname, join } from "node:path";
+import type { Database } from "bun:sqlite";
+import { join } from "node:path";
 
 export interface AccessOverrides {
   ownerUserId?: string;
@@ -8,40 +8,45 @@ export interface AccessOverrides {
   pingOnResponse?: boolean;
 }
 
-/**
- * JSON-backed overrides for access-control settings. Values set here win
- * over the corresponding env vars, so the /settings command can adjust
- * behavior at runtime without editing .env.
- *
- * Absent fields fall back to env (see config.ts).
- */
 export class AccessStore {
-  private _path: string;
-  private _data: AccessOverrides = {};
+  private _db: Database;
 
-  constructor(filePath: string) {
-    this._path = filePath;
-    this._load();
+  constructor(db: Database) {
+    this._db = db;
   }
 
   all(): AccessOverrides {
-    return { ...this._data, allowedUserIds: [...(this._data.allowedUserIds ?? [])] };
+    const rows = this._db
+      .query<{ key: string; value: string }, []>("SELECT key, value FROM access")
+      .all();
+    const map = Object.fromEntries(rows.map((r) => [r.key, r.value]));
+    return {
+      ownerUserId: map["owner_user_id"] ?? undefined,
+      allowedUserIds: map["allowed_user_ids"] ? JSON.parse(map["allowed_user_ids"]) : undefined,
+      restrictToWhitelist:
+        map["restrict_to_whitelist"] !== undefined
+          ? map["restrict_to_whitelist"] === "true"
+          : undefined,
+      pingOnResponse:
+        map["ping_on_response"] !== undefined ? map["ping_on_response"] === "true" : undefined,
+    };
   }
 
   setOwner(userId: string | null): void {
-    if (userId) this._data.ownerUserId = userId;
-    else delete this._data.ownerUserId;
-    this._save();
+    if (userId) {
+      this._upsert("owner_user_id", userId);
+    } else {
+      this._delete("owner_user_id");
+    }
   }
 
   setRestrictToWhitelist(on: boolean | null): void {
-    if (on === null) delete this._data.restrictToWhitelist;
-    else this._data.restrictToWhitelist = on;
-    this._save();
+    if (on === null) this._delete("restrict_to_whitelist");
+    else this._upsert("restrict_to_whitelist", String(on));
   }
 
   addAllowed(userIds: string[]): number {
-    const current = new Set(this._data.allowedUserIds ?? []);
+    const current = new Set<string>(this._getAllowedIds());
     let added = 0;
     for (const id of userIds) {
       if (!id) continue;
@@ -50,59 +55,52 @@ export class AccessStore {
         added++;
       }
     }
-    this._data.allowedUserIds = [...current];
-    this._save();
+    this._upsert("allowed_user_ids", JSON.stringify([...current]));
     return added;
   }
 
   removeAllowed(userIds: string[]): number {
-    const current = new Set(this._data.allowedUserIds ?? []);
+    const current = new Set<string>(this._getAllowedIds());
     let removed = 0;
     for (const id of userIds) {
       if (current.delete(id)) removed++;
     }
-    this._data.allowedUserIds = [...current];
-    this._save();
+    this._upsert("allowed_user_ids", JSON.stringify([...current]));
     return removed;
   }
 
   clearAllowed(): void {
-    this._data.allowedUserIds = [];
-    this._save();
+    this._upsert("allowed_user_ids", JSON.stringify([]));
   }
 
   setPingOnResponse(on: boolean | null): void {
-    if (on === null) delete this._data.pingOnResponse;
-    else this._data.pingOnResponse = on;
-    this._save();
+    if (on === null) this._delete("ping_on_response");
+    else this._upsert("ping_on_response", String(on));
   }
 
-  private _load(): void {
+  private _getAllowedIds(): string[] {
+    const row = this._db
+      .query<{ value: string }, [string]>("SELECT value FROM access WHERE key = ?")
+      .get("allowed_user_ids");
+    if (!row) return [];
     try {
-      const raw = readFileSync(this._path, "utf-8");
-      const parsed = JSON.parse(raw) as AccessOverrides;
-      this._data = {
-        ownerUserId: typeof parsed.ownerUserId === "string" ? parsed.ownerUserId : undefined,
-        allowedUserIds: Array.isArray(parsed.allowedUserIds)
-          ? parsed.allowedUserIds.filter((x): x is string => typeof x === "string")
-          : undefined,
-        restrictToWhitelist:
-          typeof parsed.restrictToWhitelist === "boolean" ? parsed.restrictToWhitelist : undefined,
-        pingOnResponse:
-          typeof parsed.pingOnResponse === "boolean" ? parsed.pingOnResponse : undefined,
-      };
+      return JSON.parse(row.value);
     } catch {
-      this._data = {};
+      return [];
     }
   }
 
-  private _save(): void {
-    try {
-      mkdirSync(dirname(this._path), { recursive: true });
-      writeFileSync(this._path, JSON.stringify(this._data, null, 2), "utf-8");
-    } catch (e) {
-      console.error(`[access-store] failed to save: ${e}`);
-    }
+  private _upsert(key: string, value: string): void {
+    this._db
+      .query(
+        `INSERT INTO access (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+      )
+      .run(key, value);
+  }
+
+  private _delete(key: string): void {
+    this._db.query("DELETE FROM access WHERE key = ?").run(key);
   }
 }
 
@@ -110,7 +108,7 @@ export function defaultAccessStorePath(): string {
   return join(
     process.env.HOME ?? process.env.USERPROFILE ?? ".",
     ".agent-remote",
-    "access.json",
+    "agent-remote.db",
   );
 }
 

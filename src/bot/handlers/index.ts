@@ -5,6 +5,7 @@ import {
   MessageFlags,
   type RepliableInteraction,
 } from "discord.js";
+import { error as logError } from "../../logger.js";
 import { isUserAllowed } from "../../access-store.js";
 import { BOT_COMMANDS_CHANNEL } from "../../constants.js";
 import {
@@ -223,7 +224,7 @@ export function registerHandlers(client: Client): void {
       await interaction.reply({ embeds: [fallback], flags: MessageFlags.Ephemeral });
     } catch (e) {
       if (isIgnorableInteractionError(e)) return;
-      console.error(e);
+      logError(`[index] unhandled interaction error: ${e instanceof Error ? e.stack ?? e.message : String(e)}`);
       try {
         if (!interaction.isRepliable()) return;
         const errEmb = new EmbedBuilder()
