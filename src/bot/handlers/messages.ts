@@ -52,6 +52,8 @@ async function streamAssistantRepliesEmbed(
   let named = skipRename;
   let hasError = false;
   const turnStartTime = performance.now();
+  let generationMs = 0;
+  let generationSegmentStart: number | null = null;
 
   const provider = PROVIDERS[providerKey];
   const providerName = provider?.displayName ?? providerKey;
@@ -68,7 +70,7 @@ async function streamAssistantRepliesEmbed(
 
   const emojiURL = resolvedProviderEmojiURL[providerKey];
 
-  const buildFooter = (stats?: { inputTokens?: number; outputTokens?: number; elapsed?: number }): { text: string; iconURL?: string } | null => {
+  const buildFooter = (stats?: { inputTokens?: number; outputTokens?: number; elapsed?: number; generationTime?: number }): { text: string; iconURL?: string } | null => {
     const parts: string[] = [];
     if (modelLabel) parts.push(modelLabel);
     if (stats?.elapsed != null) {
@@ -77,8 +79,9 @@ async function streamAssistantRepliesEmbed(
     }
     if (stats?.outputTokens) {
       const tok = stats.outputTokens;
-      if (stats.elapsed && stats.elapsed > 0) {
-        const tps = tok / stats.elapsed;
+      const denom = stats.generationTime ?? stats.elapsed;
+      if (denom && denom > 0) {
+        const tps = tok / denom;
         parts.push(`${tok.toLocaleString()} tokens (${tps.toFixed(1)} tok/s)`);
       } else {
         parts.push(`${tok.toLocaleString()} tokens`);
@@ -134,6 +137,7 @@ async function streamAssistantRepliesEmbed(
 
   for await (const event of adapter.streamEvents()) {
     if (event.type === "text_delta") {
+      if (generationSegmentStart === null) generationSegmentStart = performance.now();
       const isReasoning = event.metadata?.streamKind === "reasoning_text";
       if (isReasoning) {
         reasoning += event.data;
@@ -141,6 +145,13 @@ async function streamAssistantRepliesEmbed(
         response += event.data;
       }
       await render(true);
+    } else if (event.type === "tool_start") {
+      if (generationSegmentStart !== null) {
+        generationMs += performance.now() - generationSegmentStart;
+        generationSegmentStart = null;
+      }
+    } else if (event.type === "tool_result") {
+      generationSegmentStart = performance.now();
     } else if (event.type === "error") {
       clearInterval(tickTimer);
       const err = (event.data || "error").slice(0, MAX_EMBED_DESC);
@@ -154,10 +165,15 @@ async function streamAssistantRepliesEmbed(
       hasError = true;
     } else if (event.type === "done") {
       clearInterval(tickTimer);
+      if (generationSegmentStart !== null) {
+        generationMs += performance.now() - generationSegmentStart;
+        generationSegmentStart = null;
+      }
       const elapsed = (performance.now() - turnStartTime) / 1000;
+      const generationTime = generationMs > 0 ? generationMs / 1000 : undefined;
       const inputTokens = typeof event.metadata?.inputTokens === "number" ? event.metadata.inputTokens : undefined;
       const outputTokens = typeof event.metadata?.outputTokens === "number" ? event.metadata.outputTokens : undefined;
-      const stats = { inputTokens, outputTokens, elapsed };
+      const stats = { inputTokens, outputTokens, elapsed, generationTime };
 
       if (!hasError) {
         const body = formatBody();
